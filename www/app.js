@@ -1351,5 +1351,55 @@ document.addEventListener('visibilitychange', () => { // re-check when coming ba
   if (!document.hidden && (!last || Date.now() - new Date(last) > 36e5)) checkForUpdate();
 });
 $('#dialog').addEventListener('click', e => { if (e.target === $('#dialog')) closeDialog(); }); // tap backdrop to close
-window.onhashchange = render;
+let navigated = false; // whether there's an in-app page to go back to
+window.onhashchange = () => { navigated = true; render(); };
+
+// ---------- swipe right to go back (sub-pages only; the main tabs have nothing to go back to) ----------
+const PARENT = { workout: 'workouts', live: 'workouts', activity: 'activities', activities: 'more', gym: 'gyms', gyms: 'more',
+  goals: 'more', ai: 'more', settings: 'more', insights: 'stats' };
+function goBack() {
+  const parent = PARENT[location.hash.split('/')[1]];
+  if (!parent) return false;
+  navigated ? history.back() : (location.hash = '#/' + parent);
+  return true;
+}
+(() => {
+  let x0, y0, t0, dx, mode; // mode: undefined = undecided, 'swipe' = we own the gesture, 'none' = leave it to the page
+  const main = $('#main');
+  const reset = animate => {
+    main.style.transition = animate ? 'transform .2s ease-out, opacity .2s' : '';
+    main.style.transform = main.style.opacity = '';
+  };
+  document.addEventListener('touchstart', e => {
+    mode = undefined; dx = 0;
+    const t = e.touches[0];
+    // leave alone: dialogs open, multi-touch, sub-pages only, things that scroll sideways or take input
+    if (e.touches.length > 1 || $('#dialog').open || !PARENT[location.hash.split('/')[1]]
+      || e.target.closest('.seg, .tabs, .heat, .gallery, .plates, input, select, textarea, video, iframe, [contenteditable]')) mode = 'none';
+    [x0, y0, t0] = [t.clientX, t.clientY, Date.now()];
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (mode === 'none') return;
+    const t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+    if (mode === undefined) {
+      if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
+      mode = mx > 0 && Math.abs(mx) > Math.abs(my) * 1.5 ? 'swipe' : 'none'; // clearly rightwards, not a scroll
+      if (mode === 'none') return;
+    }
+    dx = Math.max(0, mx);
+    main.style.transition = '';
+    main.style.transform = `translateX(${dx}px)`;
+    main.style.opacity = String(1 - Math.min(dx / innerWidth, 1) * 0.5);
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (mode !== 'swipe') return;
+    const fast = dx > 40 && dx / (Date.now() - t0) > 0.5; // quick flick
+    if (dx > innerWidth * 0.3 || fast) {
+      main.style.transition = 'transform .15s ease-in, opacity .15s';
+      main.style.transform = `translateX(${innerWidth}px)`; main.style.opacity = '0';
+      setTimeout(() => { reset(false); goBack(); }, 150);
+    } else reset(true);
+  });
+  document.addEventListener('touchcancel', () => mode === 'swipe' && reset(true));
+})();
 boot();
