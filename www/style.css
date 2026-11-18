@@ -295,3 +295,7 @@ input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(18px); }
 /* lb plates */
 .p45 { background: #dc2626; } .p35 { background: #eab308; color: #111; height: 60px; }
+/* goal progress: fill = progress, marker = where you'd be by now */
+.goal-bar { position: relative; height: 8px; border-radius: 99px; background: var(--surface-2); margin: 10px 0 6px; }
+.goal-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.goal-bar b { position: absolute; top: -3px; width: 2px; height: 14px; margin-left: -1px; background: var(--text); opacity: .55; border-radius: 1px; }

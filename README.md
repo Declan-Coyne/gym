@@ -54,6 +54,9 @@ Bottom bar: **Home · Workouts · ＋ (quick actions) · Stats · More**. Theme:
 - **Exercises**: muscles, equipment, notes, photos/videos, YouTube how-to, PRs, estimated 1-rep max, history.
 - **Body weight, progress photos (side-by-side compare), measurements**, under Stats → Progress.
 - **Insights**: calendar, workouts per week, quietest gym times, sets per muscle, neglected muscles.
+- **Goals**: plain goals, or ones tracked from body weight, an exercise's heaviest set / estimated 1RM, or a number you log.
+  Progress bar with a marker for where you'd be by now, a status (on track / behind / off track / target reached), weekly check-ins
+  with a rating and notes, and a "check-in due" reminder badge. The AI planner sees status and recent check-in notes.
 - **AI plan**: built from time available, target muscles, recent workouts, goals and the gym's equipment.
 
 ## Layout

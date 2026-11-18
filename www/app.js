@@ -336,8 +336,8 @@ function home() {
   }).join('')}</div></div>
   ${weightCard(90, true)}${gymNow()}${recovery()}
   <div class="spread"><h2>Goals</h2><a class="btn ghost small" href="#/goals">Manage</a></div>
-  ${goals.length ? goals.map(g => `<a class="card spread" href="#/goals"><span>${icon('target')} ${esc(g.text)}</span><span class="muted small">${fmtDate(g.targetDate)}</span></a>`).join('')
-    : empty('target', 'Set a goal and the AI planner will build around it.', '<a class="btn small" style="margin-top:10px" href="#/goals">Add a goal</a>')}
+  ${goals.length ? goals.map(goalCard).join('')
+    : empty('target', 'Set a goal and the AI planner will build around it.', '<a class="btn small" style="margin-top:10px" href="#/goal/new">Add a goal</a>')}
   <div class="spread"><h2>Recent</h2><a class="btn ghost small" href="#/workouts">All workouts</a></div>
   ${done.slice(0, 3).map(workoutCard).join('') || empty('dumbbell', 'Your finished workouts will show up here.')}`;
 }
@@ -879,7 +879,12 @@ async function suggest({ minutes, muscles, notes, gymId }) {
     minutesAvailable: minutes || 60,
     targetMuscles: muscles,
     extraNotes: notes.slice(0, 2000),
-    goals: S.goals.filter(g => !g.done).map(g => ({ goal: g.text, targetDate: g.targetDate })),
+    goals: S.goals.filter(g => !g.done).map(g => {
+      const st = goalStatus(g), recent = checkinsOf(g).slice(-3);
+      return { goal: g.text, targetDate: g.targetDate || null, status: st.label,
+        ...(st.progress != null ? { start: g.start, current: st.cur, target: g.target, unit: g.unit, progressPct: Math.round(st.progress * 100) } : {}),
+        recentCheckins: recent.map(c => ({ date: c.date, feeling: c.rating ? RATING[c.rating][1] : null, value: c.value || null, note: c.note || null })) };
+    }),
     recentWorkouts: [...completed()].sort((a, b) => b.completedAt.localeCompare(a.completedAt)).slice(0, 8)
       .map(w => ({ completed: w.completedAt, name: w.name, feel: w.feel || null, items: (w.items || []).map(i => ({
         name: act(i.activityId)?.name, muscles: act(i.activityId)?.muscles, sets: i.sets, reps: i.reps, weight: i.weight, unit: unitOf(i) })) })),
@@ -896,7 +901,7 @@ async function suggest({ minutes, muscles, notes, gymId }) {
       output_config: { effort: 'medium', format: { type: 'json_schema', schema: SUGGESTION_SCHEMA } },
       system: 'You are an experienced strength and conditioning coach planning one gym session for your client. '
         + 'Fit the session inside minutesAvailable including warm-up and rest. Prioritise targetMuscles if given; otherwise '
-        + 'pick muscles that recent workouts have not trained in the last ~48 hours. Serve the client\'s goals. '
+        + 'pick muscles that recent workouts have not trained in the last ~48 hours. Serve the client\'s goals, giving most weight to goals that are behind or off track, and take their check-in notes into account. '
         + 'Prefer activities from their library (use its id); add a new activity with activityId "" only when needed. '
         + 'Base weight suggestions on their recent weights, in each exercise\'s weightUnit (kg or lb). Each recent workout has feel from 1 (rough) to 5 (great): '
         + 'if recent sessions felt rough, ease off volume; if they felt great, progress. '
@@ -1164,30 +1169,164 @@ function calendar() {
 }
 
 // ---------- goals ----------
-function goals() {
-  const list = [...S.goals].sort((a, b) => (a.done - b.done) || (a.targetDate || '9').localeCompare(b.targetDate || '9'));
-  return `${head('Goals', 'The AI planner builds workouts around your open goals.')}
-  <form class="card" onsubmit="addGoal(event)"><label style="margin-top:0">Goal</label><input name="text" required placeholder="Bench 100kg, lose 5kg, run 5k…">
-    <label>Target date (optional)</label><input type="date" name="targetDate">
-    <div class="actions"><button class="primary">${icon('plus')} Add goal</button></div></form>
-  ${list.map(g => {
-    const daysLeft = g.targetDate && !g.done ? Math.ceil((asDate(g.targetDate) - new Date()) / 864e5) : null;
-    return `<div class="card spread"><label class="row" style="margin:0;color:var(--text);font-weight:500;font-size:15px">
-    <input type="checkbox" ${g.done ? 'checked' : ''} onchange="toggleGoal('${g.id}', this.checked)">
-    <span style="${g.done ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(g.text)}</span></label>
-    <span class="row">${daysLeft !== null ? `<span class="badge ${daysLeft < 0 ? 'b4' : 'plan'}">${daysLeft < 0 ? 'overdue' : daysLeft + ' days'}</span>` : ''}
-    <button class="ghost small danger" onclick="delGoal('${g.id}')">${icon('x')}</button></span></div>`;
-  }).join('')}`;
+// A goal can be plain ("feel stronger") or measurable: tracked from body weight, an exercise's heaviest set / estimated
+// 1-rep max, or a number you log in check-ins. Status comes from progress vs. time elapsed, or from your check-in ratings.
+const RATING = { good: ['😀', 'On track'], ok: ['😐', 'Hard going'], bad: ['😟', 'Off track'] };
+const GOAL_KINDS = { none: 'Just a goal', bodyweight: 'Body weight', exercise: 'Exercise weight', manual: 'A number I log' };
+const goalById = id => S.goals.find(g => g.id === id);
+const checkinsOf = g => [...(g.checkins || [])].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+const goalSince = g => (g.createdAt || '').slice(0, 10);
+function goalSeries(g) { // [{x: date, y: value in g.unit}] oldest first
+  if (g.track === 'bodyweight') return weights().filter(m => m.date >= goalSince(g)).map(m => ({ x: m.date, y: r1(convW(m.value, m.unit, g.unit)) }));
+  if (g.track === 'exercise') return historyFor(g.activityId).filter(h => h.date.slice(0, 10) >= goalSince(g)).reverse()
+    .map(h => ({ x: h.date, y: r1(convW(g.metric === 'e1rm' ? h.e1rm : h.weight, actUnit(g.activityId), g.unit)) })).filter(p => p.y);
+  if (g.track === 'manual') return checkinsOf(g).filter(c => c.value !== '' && c.value != null).map(c => ({ x: c.date, y: +c.value }));
+  return [];
 }
-async function addGoal(e) {
+function goalCurrent(g) { // latest value in g.unit, or null
+  if (g.track === 'exercise') { // best so far, not just the latest session
+    const all = historyFor(g.activityId).map(h => g.metric === 'e1rm' ? h.e1rm : h.weight);
+    return all.length && Math.max(...all) ? r1(convW(Math.max(...all), actUnit(g.activityId), g.unit)) : null;
+  }
+  if (g.track === 'bodyweight') { const w = weights().at(-1); return w ? r1(convW(w.value, w.unit, g.unit)) : null; }
+  return goalSeries(g).at(-1)?.y ?? null;
+}
+function goalStatus(g) { // { label, cls, progress (0..1 or null), expected (0..1 or null), cur }
+  const measurable = g.track && g.track !== 'none' && g.target !== '' && g.target != null;
+  const cur = measurable ? goalCurrent(g) : null;
+  const start = num(g.start), target = num(g.target);
+  const progress = measurable && cur != null && target !== start ? Math.max(0, Math.min(1, (cur - start) / (target - start))) : null;
+  const t0 = new Date(g.createdAt || Date.now()), t1 = g.targetDate ? asDate(g.targetDate) : null;
+  const expected = t1 && t1 > t0 ? Math.max(0, Math.min(1, (Date.now() - t0) / (t1 - t0))) : null;
+  const lastRating = checkinsOf(g).filter(c => c.rating).at(-1)?.rating;
+  let label, cls;
+  if (g.done) [label, cls] = ['Achieved', 'b1'];
+  else if (progress === 1) [label, cls] = ['Target reached', 'b1'];
+  else if (t1 && t1 < asDate(today())) [label, cls] = ['Overdue', 'b4'];
+  else if (progress != null && expected != null) [label, cls] = progress >= expected - 0.1 ? ['On track', 'b1'] : progress >= expected - 0.25 ? ['Behind', 'b2'] : ['Off track', 'b4'];
+  else if (lastRating) [label, cls] = [RATING[lastRating][1], { good: 'b1', ok: 'b2', bad: 'b4' }[lastRating]];
+  else [label, cls] = ['No check-ins yet', ''];
+  return { label, cls, progress, expected, cur };
+}
+const lastCheckin = g => checkinsOf(g).at(-1);
+const checkinDue = g => !g.done && (Date.now() - new Date(lastCheckin(g)?.date || g.createdAt || Date.now())) > 7 * 864e5;
+const fmtGoalNum = (v, g) => v == null || v === '' ? '–' : `${+(+v).toFixed(1)}${g.unit ? ' ' + esc(g.unit) : ''}`;
+function goalProgressBar(g, st = goalStatus(g)) {
+  if (st.progress == null) return '';
+  return `<div class="goal-bar"><i style="width:${st.progress * 100}%"></i>${st.expected != null && !g.done ? `<b style="left:${st.expected * 100}%" title="Where you should be by now"></b>` : ''}</div>
+    <div class="spread muted small"><span>${fmtGoalNum(g.start, g)}</span><span><b style="color:var(--text)">${fmtGoalNum(st.cur, g)}</b> · ${Math.round(st.progress * 100)}%</span><span>${fmtGoalNum(g.target, g)}</span></div>`;
+}
+function goalCard(g) {
+  const st = goalStatus(g), last = lastCheckin(g);
+  const daysLeft = g.targetDate && !g.done ? Math.ceil((asDate(g.targetDate) - asDate(today())) / 864e5) : null;
+  return `<a class="card" href="#/goal/${g.id}"><div class="spread"><h3 style="${g.done ? 'opacity:.6' : ''}">${icon('target')} ${esc(g.text)}</h3>
+    <span class="badge ${st.cls}">${st.label}</span></div>
+    ${goalProgressBar(g, st)}
+    <div class="w-meta">${daysLeft !== null ? `<span>${icon('clock')} ${daysLeft < 0 ? Math.abs(daysLeft) + ' days over' : daysLeft + ' days left'}</span>` : ''}
+    <span>${last ? `Checked in ${ago(last.createdAt || last.date)}` : 'No check-ins'}</span>${checkinDue(g) ? '<span class="badge plan">Check-in due</span>' : ''}</div></a>`;
+}
+function goals() {
+  const open = S.goals.filter(g => !g.done).sort((a, b) => (a.targetDate || '9').localeCompare(b.targetDate || '9'));
+  const done = S.goals.filter(g => g.done);
+  return `${head('Goals', 'The AI planner builds workouts around your open goals and how they are going.', `<a class="btn primary" href="#/goal/new">${icon('plus')} New</a>`)}
+  ${open.map(goalCard).join('') || empty('target', 'Set a goal, like bench 100 kg or get to 75 kg, and check in on it each week.', `<a class="btn small" style="margin-top:10px" href="#/goal/new">Add a goal</a>`)}
+  ${done.length ? `<h2>Achieved</h2>${done.map(goalCard).join('')}` : ''}`;
+}
+function goalForm(g) {
+  const kind = g.track || 'none', exs = [...S.activities].sort(byName);
+  return `<form id="gform" onsubmit="saveGoal(event, '${g.id || ''}')" onchange="goalFormSync(true)">
+    <label style="margin-top:0">Goal</label><input name="text" required value="${esc(g.text)}" placeholder="Bench 100 kg, get to 75 kg, 10 pull-ups…">
+    <label>Track it with</label><select name="track">${Object.entries(GOAL_KINDS).map(([k, l]) => `<option value="${k}" ${k === kind ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <div data-for="exercise"><label>Exercise</label><select name="activityId">${exs.map(a => `<option value="${a.id}" ${a.id === g.activityId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+      <label>Measure</label><select name="metric"><option value="weight">Heaviest set</option><option value="e1rm" ${g.metric === 'e1rm' ? 'selected' : ''}>Estimated 1-rep max</option></select></div>
+    <div data-for="bodyweight exercise manual"><div class="row">
+      <div class="grow"><label>Starting value</label><input name="start" type="number" step="any" inputmode="decimal" value="${esc(g.start ?? '')}" placeholder="Now"></div>
+      <div class="grow"><label>Target</label><input name="target" type="number" step="any" inputmode="decimal" value="${esc(g.target ?? '')}"></div>
+      <div style="width:90px"><label>Unit</label><input name="unit" value="${esc(g.unit ?? '')}" placeholder="kg"></div></div>
+      <p class="hint" data-for="bodyweight exercise">Leave the starting value empty to use your current one.</p></div>
+    <label>Target date (optional)</label><input type="date" name="targetDate" value="${esc(g.targetDate || '')}">
+    <div class="actions"><button class="primary">${g.id ? 'Save' : `${icon('plus')} Add goal`}</button>
+    ${g.id ? `<button type="button" class="danger" onclick="delGoal('${g.id}')">Delete</button>` : ''}</div></form>`;
+}
+function goalFormSync(changed) { // show the fields that fit the chosen kind; default the unit when the user changes it
+  const f = $('#gform');
+  if (!f) return;
+  const kind = f.elements.track.value;
+  f.querySelectorAll('[data-for]').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(kind); });
+  const u = f.elements.unit;
+  if (kind === 'bodyweight' && (changed || !u.value)) u.value = pref('bodyUnit');
+  if (kind === 'exercise' && (changed || !u.value)) u.value = actUnit(f.elements.activityId.value);
+  u.readOnly = kind === 'bodyweight' || kind === 'exercise';
+}
+function goal(id) {
+  if (id === 'new') return `${head('New goal')}<div class="card">${goalForm({ text: '' })}</div>`;
+  const g = goalById(id);
+  if (!g) return empty('target', 'Goal not found.');
+  const st = goalStatus(g), series = goalSeries(g), list = checkinsOf(g).reverse();
+  const isManual = g.track === 'manual';
+  return `${head(esc(g.text), g.targetDate ? `Target date ${fmtDate(g.targetDate)}` : '', `<span class="badge ${st.cls}">${st.label}</span>`)}
+  ${st.progress != null ? `<div class="card">${goalProgressBar(g, st)}
+    ${st.expected != null && !g.done ? `<div class="hint">By now you'd be about ${Math.round(st.expected * 100)}% of the way (the line on the bar).</div>` : ''}
+    ${series.length > 1 ? `<div style="margin-top:10px">${lineChart(series, g.unit || '')}</div>` : ''}</div>` : ''}
+  ${st.progress === 1 && !g.done ? `<div class="card info-card"><span class="ic-wrap">${icon('trophy')}</span><div style="flex:1"><b>You've hit your target!</b></div>
+    <button class="primary small" onclick="toggleGoal('${g.id}', true)">Mark achieved</button></div>` : ''}
+  ${g.done ? '' : `<h2>Check in</h2>
+  <form class="card" onsubmit="addCheckin(event, '${g.id}')">
+    <label style="margin-top:0">How's it going?</label>
+    <div class="busy-pick" style="grid-template-columns:repeat(3,1fr)">${Object.entries(RATING).map(([k, [e, l]]) => `<label><input type="radio" name="rating" value="${k}" ${k === 'good' ? 'checked' : ''}><span>${e}<br><small>${l}</small></span></label>`).join('')}</div>
+    ${isManual ? `<label>Current value${g.unit ? ` (${esc(g.unit)})` : ''}</label><input name="value" type="number" step="any" inputmode="decimal" placeholder="${esc(st.cur ?? '')}">` : ''}
+    <label>Notes</label><textarea name="note" placeholder="What went well, what got in the way, what's next…"></textarea>
+    <div class="row" style="margin-top:8px"><input class="grow" type="date" name="date" value="${today()}" required>
+    <button class="primary">${icon('check')} Check in</button></div></form>`}
+  <h2>History</h2>
+  ${list.map(c => `<div class="card"><div class="spread"><b>${c.rating ? RATING[c.rating][0] + ' ' + RATING[c.rating][1] : 'Check-in'}</b>
+    <span class="row"><span class="muted small">${fmtDate(c.date)}</span><button class="ghost small danger" onclick="delCheckin('${g.id}', '${c.id}')">${icon('x')}</button></span></div>
+    ${c.value != null && c.value !== '' ? `<div class="small"><b>${fmtGoalNum(c.value, g)}</b></div>` : ''}${c.note ? `<p style="white-space:pre-wrap;margin:6px 0 0">${esc(c.note)}</p>` : ''}</div>`).join('')
+    || '<p class="muted">No check-ins yet. A quick one each week keeps you honest and helps the AI planner.</p>'}
+  <div class="actions">${g.done ? `<button onclick="toggleGoal('${g.id}', false)">Reopen goal</button>` : `<button onclick="toggleGoal('${g.id}', true)">${icon('trophy')} Mark achieved</button>`}</div>
+  <details class="card" style="margin-top:12px"><summary><b>Edit goal</b></summary><div style="margin-top:10px">${goalForm(g)}</div></details>`;
+}
+async function saveGoal(e, id) {
   e.preventDefault();
-  const f = e.target.elements;
-  await saveItem('goals', { text: f.text.value.trim(), targetDate: f.targetDate.value, done: false });
-  toast('Goal added');
+  const f = e.target.elements, track = f.track.value, old = goalById(id) || {};
+  const g = { ...old, text: f.text.value.trim(), track, targetDate: f.targetDate.value, done: old.done || false, checkins: old.checkins || [] };
+  if (track === 'exercise') Object.assign(g, { activityId: f.activityId.value, metric: f.metric.value });
+  if (track !== 'none') {
+    Object.assign(g, { target: f.target.value, unit: f.unit.value.trim() });
+    if (track === 'exercise' && !g.activityId) return toast('Add an exercise first (More → Exercises)', true);
+    if (g.target === '') return toast('Enter a target number', true);
+    // empty start = where you are today
+    g.start = f.start.value !== '' ? f.start.value : String(goalCurrent({ ...g, createdAt: new Date().toISOString() }) ?? '');
+    if (g.start === '') return toast(track === 'manual' ? 'Enter your starting value' : 'No data yet to start from. Enter a starting value', true);
+  }
+  const saved = await saveItem('goals', g);
+  toast(id ? 'Goal saved' : 'Goal added');
+  location.hash = '#/goal/' + saved.id;
   render();
 }
-async function toggleGoal(id, done) { await saveItem('goals', { ...S.goals.find(g => g.id === id), done }); if (done) toast('Goal smashed 🎉'); render(); }
-async function delGoal(id) { if (await delItem('goals', id)) render(); }
+async function addCheckin(e, id) {
+  e.preventDefault();
+  const f = e.target, g = goalById(id);
+  const c = { id: crypto.randomUUID(), date: f.elements.date.value, rating: checked(f, 'rating')[0] || null,
+    value: f.elements.value?.value ?? null, note: f.elements.note.value.trim(), createdAt: new Date().toISOString() };
+  if (g.track === 'manual' && (c.value === '' || c.value == null) && !c.note && !c.rating) return toast('Add a value or a note', true);
+  await saveItem('goals', { ...g, checkins: [...(g.checkins || []), c] });
+  const st = goalStatus(goalById(id));
+  toast(st.progress === 1 ? 'Target reached! 🎉' : 'Checked in');
+  render();
+}
+async function delCheckin(gid, cid) {
+  if (!confirm('Delete this check-in?')) return;
+  const g = goalById(gid);
+  await saveItem('goals', { ...g, checkins: (g.checkins || []).filter(c => c.id !== cid) });
+  render();
+}
+async function toggleGoal(id, done) {
+  await saveItem('goals', { ...goalById(id), done, doneAt: done ? new Date().toISOString() : null });
+  if (done) toast('Goal smashed 🎉');
+  render();
+}
+async function delGoal(id) { if (await delItem('goals', id)) location.hash = '#/goals'; }
 
 // ---------- more ----------
 function more() {
@@ -1197,7 +1336,7 @@ function more() {
   <div class="list">
     ${row('#/activities', 'list', 'Exercises', S.activities.length)}
     ${row('#/gyms', 'pin', 'Gyms', gym ? esc(gym.name) : 'Add one')}
-    ${row('#/goals', 'target', 'Goals', S.goals.filter(g => !g.done).length + ' open')}
+    ${row('#/goals', 'target', 'Goals', (S.goals.some(checkinDue) ? '<span class="badge plan">Check-in due</span> ' : '') + S.goals.filter(g => !g.done).length + ' open')}
     ${row('#/ai', 'sparkles', 'AI workout plan')}
     <button onclick="plateDialog()"><span class="lead">${icon('disc')}</span>Plate calculator<span class="trail">${icon('right')}</span></button></div>
   <div class="list">${row('#/settings', 'gear', 'Settings', UPD.state === 'ready' ? '<span class="badge plan">Update ready</span>' : '')}</div>`;
@@ -1245,9 +1384,9 @@ async function eraseAll() {
 }
 
 // ---------- shell ----------
-const routes = { home, workouts, workout, live, activities, activity, gyms, gym, ai, progress, insights, goals, more, settings, stats: progress };
+const routes = { home, workouts, workout, live, activities, activity, gyms, gym, ai, progress, insights, goals, goal, more, settings, stats: progress };
 const TAB_OF = { workout: 'workouts', live: 'workouts', progress: 'stats', insights: 'stats', activities: 'more', activity: 'more',
-  gyms: 'more', gym: 'more', goals: 'more', ai: 'more', settings: 'more' };
+  gyms: 'more', gym: 'more', goals: 'more', goal: 'more', ai: 'more', settings: 'more' };
 function render() {
   const [, name = 'home', id] = location.hash.split('/');
   const tab = TAB_OF[name] || name;
@@ -1262,6 +1401,7 @@ function render() {
   render.page = page;
   if ($('#muscles')) updateMuscles();
   if ($('#appinfo')) appInfo();
+  goalFormSync();
   keepAwake(name === 'live');
   tick();
 }
@@ -1356,7 +1496,7 @@ window.onhashchange = () => { navigated = true; render(); };
 
 // ---------- swipe right to go back (sub-pages only; the main tabs have nothing to go back to) ----------
 const PARENT = { workout: 'workouts', live: 'workouts', activity: 'activities', activities: 'more', gym: 'gyms', gyms: 'more',
-  goals: 'more', ai: 'more', settings: 'more', insights: 'stats' };
+  goals: 'more', goal: 'goals', ai: 'more', settings: 'more', insights: 'stats' };
 function goBack() {
   const parent = PARENT[location.hash.split('/')[1]];
   if (!parent) return false;
