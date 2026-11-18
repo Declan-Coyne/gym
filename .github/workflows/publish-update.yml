@@ -26,7 +26,10 @@ jobs:
           # keep the previous few zips: GitHub's file CDN can serve the old version.json for ~5 minutes after a push,
           # and a phone checking in that window must still be able to download the zip it names
           if git fetch -q origin updates; then git archive FETCH_HEAD | tar -x -C out; fi
-          (cd www && zip -qrX "../out/www-$V.zip" .)
+          if [ ! -f "out/www-$V.zip" ]; then # same version = same zip, so its checksum never changes
+            find www -exec touch -d "$D" {} + # fixed timestamps make the zip reproducible
+            (cd www && find . -type f | LC_ALL=C sort | zip -qX "../out/www-$V.zip" -@)
+          fi
           touch out/history.txt; grep -qx "www-$V.zip" out/history.txt || echo "www-$V.zip" >> out/history.txt
           tail -n 5 out/history.txt > out/keep.txt
           for f in out/www-*.zip; do grep -qx "$(basename "$f")" out/keep.txt || rm "$f"; done
