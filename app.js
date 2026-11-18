@@ -73,7 +73,10 @@ function platesFor(total, bar) { // greedy per-side plate list; `left` = kg that
 }
 console.assert(platesFor(100, 20).out.join() === '25,15' && platesFor(61, 20).left === 1 && !platesFor(20, 20).out.length, 'platesFor');
 
-let S = {}, MUSCLES = [], cfg = {}, lastSuggestion = null, actFilter = '', calOffset = 0, insightGym = '', audio;
+const MUSCLES = ['Chest', 'Upper back', 'Lats', 'Traps', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Obliques',
+  'Lower back', 'Glutes', 'Quads', 'Hamstrings', 'Calves', 'Hip flexors', 'Adductors', 'Abductors', 'Cardio'];
+const COLLECTIONS = ['activities', 'workouts', 'measurements', 'goals', 'gyms', 'media'];
+let S = {}, lastSuggestion = null, actFilter = '', calOffset = 0, insightGym = '', audio;
 
 const store = { // per-device conveniences only; storage may be unavailable (private mode)
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
@@ -81,28 +84,46 @@ const store = { // per-device conveniences only; storage may be unavailable (pri
 };
 window.addEventListener('unhandledrejection', e => toast(e.reason?.message || String(e.reason), true));
 
-async function api(method, url, body, raw) {
-  const r = await fetch(url, {
-    method,
-    headers: raw ? { 'content-type': body.type || 'application/octet-stream' } : body ? { 'content-type': 'application/json' } : {},
-    body: raw ? body : body && JSON.stringify(body),
+// ---------- on-device storage (IndexedDB): 'data' = all records, 'file:<id>' = photo/video blobs ----------
+const idb = new Promise((ok, fail) => {
+  const r = indexedDB.open('gym', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('kv');
+  r.onsuccess = () => ok(r.result);
+  r.onerror = () => fail(r.error);
+});
+async function idbDo(mode, fn) {
+  const db = await idb;
+  return new Promise((ok, fail) => {
+    const tx = db.transaction('kv', mode), req = fn(tx.objectStore('kv'));
+    tx.oncomplete = () => ok(req.result);
+    tx.onerror = tx.onabort = () => fail(tx.error || new Error('Could not save on this device'));
   });
-  const data = await r.json().catch(() => ({}));
-  if (r.status === 401) { cfg.authed = false; render(); throw new Error('Please sign in again.'); }
-  if (!r.ok) throw new Error(data.error || r.statusText);
-  return data;
 }
+const dbGet = k => idbDo('readonly', s => s.get(k));
+const dbPut = (k, v) => idbDo('readwrite', s => s.put(v, k));
+const dbDel = k => idbDo('readwrite', s => s.delete(k));
+const persist = () => dbPut('data', S);
+const URLS = {}; // media id -> object URL of its blob
+const fileUrl = m => URLS[m.id] || '';
+
 async function saveItem(col, item) {
-  const saved = item.id ? await api('PUT', `/api/${col}/${item.id}`, item) : await api('POST', `/api/${col}`, item);
-  const i = S[col].findIndex(x => x.id === saved.id);
+  const i = S[col].findIndex(x => x.id === item.id);
+  const saved = i < 0 ? { ...item, id: crypto.randomUUID(), createdAt: new Date().toISOString() }
+    : { ...S[col][i], ...item, id: S[col][i].id, updatedAt: new Date().toISOString() };
   i < 0 ? S[col].push(saved) : (S[col][i] = saved);
+  await persist();
   return saved;
+}
+async function removeMedia(keep) {
+  const gone = S.media.filter(m => !keep(m));
+  S.media = S.media.filter(keep);
+  for (const m of gone) { await dbDel('file:' + m.id); URL.revokeObjectURL(URLS[m.id]); delete URLS[m.id]; }
 }
 async function delItem(col, id) {
   if (!confirm('Delete this? This can\'t be undone.')) return false;
-  await api('DELETE', `/api/${col}/${id}`);
   S[col] = S[col].filter(x => x.id !== id);
-  if (col === 'activities') S.media = S.media.filter(m => m.activityId !== id);
+  if (col === 'activities') await removeMedia(m => m.activityId !== id);
+  await persist();
   toast('Deleted');
   return true;
 }
@@ -191,24 +212,30 @@ setTheme(store.get('theme', 'system'));
 const uploader = (q, label = 'Photo / video', accept = 'image/*,video/*') => `<label class="btn small">${icon('plus')} ${label}<input type="file" accept="${accept}" multiple hidden
   onchange="uploadFiles(this, '${q}')"></label>`;
 const gallery = (list, canDelete = true) => list.length ? `<div class="gallery" style="margin-top:10px">${[...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(m => `<figure>
-  ${m.type.startsWith('video') ? `<video src="/media/${m.file}" controls playsinline preload="metadata"></video>`
-    : `<a href="/media/${m.file}" target="_blank"><img src="/media/${m.file}" loading="lazy" alt=""></a>`}
+  ${m.type.startsWith('video') ? `<video src="${fileUrl(m)}" controls playsinline preload="metadata"></video>`
+    : `<img src="${fileUrl(m)}" loading="lazy" alt="" onclick="viewPhoto('${m.id}')">`}
   <figcaption><span>${fmtDate(m.date)}</span>${canDelete ? `<button class="ghost small" onclick="deleteMedia('${m.id}')">Delete</button>` : ''}</figcaption></figure>`).join('')}</div>` : '';
+const viewPhoto = id => openDialog(`<img src="${fileUrl({ id })}" alt="" style="width:100%;border-radius:12px;display:block">
+  <div class="actions"><button class="block" onclick="closeDialog()">Close</button></div>`);
 async function uploadFiles(input, q, goTo) {
-  const files = [...input.files];
+  const files = [...input.files].filter(f => /^(image|video)\//.test(f.type)), p = new URLSearchParams(q);
   for (const [n, f] of files.entries()) {
-    toast(`Uploading ${n + 1} of ${files.length}…`);
-    const name = f.name || (f.type.startsWith('video') ? 'clip.mp4' : 'photo.jpg');
-    S.media.push(await api('POST', `/api/media?${q}&name=${encodeURIComponent(name)}`, f, true));
+    toast(`Saving ${n + 1} of ${files.length}…`);
+    const m = { id: crypto.randomUUID(), kind: p.get('kind'), activityId: p.get('activityId') || null, date: p.get('date') || today(),
+      type: f.type, name: f.name || '', createdAt: new Date().toISOString() };
+    await dbPut('file:' + m.id, f);
+    URLS[m.id] = URL.createObjectURL(f);
+    S.media.push(m);
+    await persist();
   }
-  toast('Uploaded');
+  toast(files.length ? 'Saved' : 'Only photos and videos can be added', !files.length);
   closeDialog();
   if (goTo && location.hash !== goTo) location.hash = goTo; else render();
 }
 async function deleteMedia(id) {
   if (!confirm('Delete this file?')) return;
-  await api('DELETE', '/api/media/' + id);
-  S.media = S.media.filter(m => m.id !== id);
+  await removeMedia(m => m.id !== id);
+  await persist();
   render();
 }
 const ytId = u => /(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/.exec(u || '')?.[1];
@@ -315,11 +342,41 @@ function recovery() { // hours since each muscle was last trained
     <div class="dots">${list.map(m => `<span class="dot ${status(m)}" title="${last[m] ? 'Trained ' + ago(last[m]) : 'Not trained yet'}">${esc(m)}</span>`).join('')}</div>
     <div class="hint">Green = ready · amber = recovering (1–2.5 days) · red = trained in the last day</div></div>`;
 }
-function exportData() {
+const toDataUrl = blob => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => fail(r.error); r.readAsDataURL(blob); });
+// shortcut: videos are left out of the backup (too big for one JSON file); include them if a zip backup is ever added
+async function exportData() {
+  toast('Preparing backup…');
+  const files = {};
+  for (const m of S.media) if (m.type.startsWith('image')) { const b = await dbGet('file:' + m.id); if (b) files[m.id] = await toDataUrl(b); }
+  const file = new File([JSON.stringify({ ...S, files })], `gym-backup-${today()}.json`, { type: 'application/json' });
+  if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file] }).catch(() => {}); // iPhone: Save to Files / iCloud
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }));
-  a.download = `gym-backup-${today()}.json`;
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
   a.click();
+}
+async function importData(input) {
+  const f = input.files[0];
+  input.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch { return toast('That file is not a Gym backup', true); }
+  if (!Array.isArray(data.workouts) || !Array.isArray(data.activities)) return toast('That file is not a Gym backup', true);
+  if (!confirm('Replace everything on this phone with this backup?')) return;
+  const { files = {}, ...rest } = data;
+  await removeMedia(() => false);
+  for (const [id, url] of Object.entries(files)) {
+    const blob = await (await fetch(url)).blob();
+    await dbPut('file:' + id, blob);
+    URLS[id] = URL.createObjectURL(blob);
+  }
+  S = rest;
+  for (const c of COLLECTIONS) S[c] ||= [];
+  S.media = S.media.filter(m => URLS[m.id]); // drop entries whose file wasn't in the backup (videos)
+  await persist();
+  toast('Backup restored');
+  location.hash = '#/home';
+  render();
 }
 
 // ---------- workouts ----------
@@ -736,6 +793,9 @@ async function deleteGym(id) { if (await delItem('gyms', id)) location.hash = '#
 function ai() {
   const gym = mainGym();
   return `${head('AI workout plan', 'Built from your recent workouts, goals, recovery and gym equipment.')}
+  ${store.get('apiKey') ? '' : `<div class="card info-card"><span class="ic-wrap">${icon('sparkles')}</span><div style="flex:1"><b>Add your Claude API key</b>
+    <div class="hint">The AI planner needs a key from console.anthropic.com. It stays on this phone.</div></div>
+    <button class="primary small" onclick="keyDialog()">Add</button></div>`}
   <form class="card" onsubmit="runSuggest(event)">
     <label style="margin-top:0">Time available</label>
     <div class="busy-pick">${[30, 45, 60, 90].map(m => `<label><input type="radio" name="minutes" value="${m}" ${m === 60 ? 'checked' : ''}><span>${m} min</span></label>`).join('')}</div>
@@ -745,12 +805,100 @@ function ai() {
     <div class="actions"><button class="primary block" id="aibtn">${icon('sparkles')} Suggest workout</button></div></form>
   <div id="aiout">${lastSuggestion ? suggestionHtml(lastSuggestion) : ''}</div>`;
 }
+const SUGGESTION_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['name', 'rationale', 'items'],
+  properties: {
+    name: { type: 'string' },
+    rationale: { type: 'string' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['activityId', 'name', 'muscles', 'equipment', 'sets', 'reps', 'notes'],
+        properties: {
+          activityId: { type: 'string', description: 'id from the library, or "" for a new activity' },
+          name: { type: 'string' },
+          muscles: { type: 'array', items: { type: 'string', enum: MUSCLES } },
+          equipment: { type: 'array', items: { type: 'string' }, description: 'equipment the exercise needs, e.g. ["Dumbbells","Bench"] or ["Bodyweight"]' },
+          sets: { type: 'integer' },
+          reps: { type: 'string', description: 'e.g. "8-10", "12", "45s"' },
+          notes: { type: 'string', description: 'short coaching cue, weight suggestion or rest time' },
+        },
+      },
+    },
+  },
+};
+const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.8.0/+esm';
+async function suggest({ minutes, muscles, notes, gymId }) {
+  const apiKey = store.get('apiKey');
+  if (!apiKey) { keyDialog(); throw new Error('Add your Claude API key first (More → Claude API key).'); }
+  let Anthropic;
+  try { ({ default: Anthropic } = await import(SDK_URL)); } catch { throw new Error('Could not load the AI library. Are you online?'); }
+  const gym = gymById(gymId);
+  const context = {
+    today: today(),
+    gym: gym ? { name: gym.name, equipmentAvailable: ['Bodyweight', ...(gym.equipment || [])] } : null,
+    minutesAvailable: minutes || 60,
+    targetMuscles: muscles,
+    extraNotes: notes.slice(0, 2000),
+    goals: S.goals.filter(g => !g.done).map(g => ({ goal: g.text, targetDate: g.targetDate })),
+    recentWorkouts: [...completed()].sort((a, b) => b.completedAt.localeCompare(a.completedAt)).slice(0, 8)
+      .map(w => ({ completed: w.completedAt, name: w.name, feel: w.feel || null, items: (w.items || []).map(i => ({
+        name: act(i.activityId)?.name, muscles: act(i.activityId)?.muscles, sets: i.sets, reps: i.reps, weight: i.weight })) })),
+    library: S.activities.map(a => ({ id: a.id, name: a.name, muscles: a.muscles, equipment: a.equipment || [] })),
+  };
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true }); // key is the user's own, stored only on their phone
+  let msg;
+  try {
+    msg = await client.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema: SUGGESTION_SCHEMA } },
+      system: 'You are an experienced strength and conditioning coach planning one gym session for your client. '
+        + 'Fit the session inside minutesAvailable including warm-up and rest. Prioritise targetMuscles if given; otherwise '
+        + 'pick muscles that recent workouts have not trained in the last ~48 hours. Serve the client\'s goals. '
+        + 'Prefer activities from their library (use its id); add a new activity with activityId "" only when needed. '
+        + 'Base weight suggestions on their recent weights. Each recent workout has feel from 1 (rough) to 5 (great): '
+        + 'if recent sessions felt rough, ease off volume; if they felt great, progress. '
+        + 'If gym.equipmentAvailable is given, only pick exercises whose equipment is all in that list (an empty equipment list '
+        + 'means unknown, treat as available); new exercises must also only need that equipment, using the same equipment names. '
+        + 'Keep rationale to 2-3 sentences.',
+      messages: [{ role: 'user', content: JSON.stringify(context) }],
+    });
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) throw new Error('Your Claude API key was rejected. Check it under More → Claude API key.');
+    if (e instanceof Anthropic.PermissionDeniedError) throw new Error('This API key is not allowed to use the model. Check your Anthropic Console.');
+    if (e instanceof Anthropic.RateLimitError) throw new Error('Too many requests, or your credit has run out. Try again shortly.');
+    if (e instanceof Anthropic.APIConnectionError) throw new Error('Could not reach Claude. Are you online?');
+    throw e;
+  }
+  if (msg.stop_reason === 'refusal') throw new Error('The AI declined this request.');
+  return JSON.parse(msg.content.find(b => b.type === 'text').text);
+}
+function keyDialog() {
+  openDialog(`<h2 style="margin-top:0">Claude API key</h2>
+  <form onsubmit="saveKey(event)">
+    <p class="hint">Create one at console.anthropic.com → API Keys. It is saved only on this phone and sent only to Anthropic.</p>
+    <label>API key</label><input name="key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(store.get('apiKey', ''))}">
+    <div class="actions"><button class="primary">Save</button>
+    ${store.get('apiKey') ? '<button type="button" class="danger" onclick="saveKey(null)">Remove</button>' : ''}
+    <button type="button" onclick="closeDialog()">Cancel</button></div></form>`);
+}
+function saveKey(e) {
+  e?.preventDefault();
+  const key = e ? e.target.elements.key.value.trim() : '';
+  if (key) store.set('apiKey', key); else { try { localStorage.removeItem('apiKey'); } catch {} }
+  closeDialog();
+  toast(key ? 'API key saved' : 'API key removed');
+  render();
+}
 async function runSuggest(e) {
   e.preventDefault();
   const f = e.target, btn = $('#aibtn');
   btn.disabled = true; btn.textContent = 'Thinking… (can take a minute)';
   try {
-    lastSuggestion = await api('POST', '/api/suggest', { minutes: +checked(f, 'minutes')[0], muscles: checked(f, 'muscles'),
+    lastSuggestion = await suggest({ minutes: +checked(f, 'minutes')[0], muscles: checked(f, 'muscles'),
       notes: f.elements.notes.value, gymId: f.elements.gymId?.value });
     lastSuggestion.gymId = f.elements.gymId?.value || null;
     $('#aiout').innerHTML = suggestionHtml(lastSuggestion);
@@ -842,7 +990,7 @@ function photoCompare(photos) {
     const w = weightOn(p.date);
     return `<figure><select style="margin-bottom:6px;padding:7px 9px;font-size:13px" onchange="photoPick[${i}]=this.value; render()">
       ${photos.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${fmtDate(x.date)}</option>`).join('')}</select>
-      <img src="/media/${p.file}" alt=""><figcaption>${w ? `${w.value} ${esc(w.unit || 'kg')}` : ''}</figcaption></figure>`;
+      <img src="${fileUrl(p)}" alt=""><figcaption>${w ? `${w.value} ${esc(w.unit || 'kg')}` : ''}</figcaption></figure>`;
   };
   const wa = weightOn(a.date), wb = weightOn(b.date);
   return `<div class="card"><div class="spread" style="margin-bottom:8px"><b>Compare</b><span class="muted small">${Math.abs(days)} days apart
@@ -1007,37 +1155,23 @@ function more() {
     ${row('#/activities', 'list', 'Exercises', S.activities.length)}
     ${row('#/gyms', 'pin', 'Gyms', gym ? esc(gym.name) : 'Add one')}
     ${row('#/goals', 'target', 'Goals', S.goals.filter(g => !g.done).length + ' open')}
-    ${row('#/ai', 'sparkles', 'AI workout plan')}</div>
+    ${row('#/ai', 'sparkles', 'AI workout plan')}
+    <button onclick="keyDialog()"><span class="lead">${icon('sparkles')}</span>Claude API key<span class="trail">${store.get('apiKey') ? 'Saved' : 'Not set'}${icon('right')}</span></button></div>
   <h2>Tools</h2><div class="list">
     <button onclick="plateDialog()"><span class="lead">${icon('disc')}</span>Plate calculator<span class="trail">${icon('right')}</span></button>
-    <button onclick="exportData()"><span class="lead">${icon('download')}</span>Download backup<span class="trail">JSON</span></button></div>
+    <button onclick="exportData()"><span class="lead">${icon('download')}</span>Back up data<span class="trail">JSON</span></button>
+    <label><span class="lead">${icon('plus')}</span>Restore backup<input type="file" accept="application/json,.json" hidden onchange="importData(this)"><span class="trail">${icon('right')}</span></label></div>
+  <p class="hint">Everything is stored only on this phone. Back up now and then (photos included, videos not).</p>
   <h2>Appearance</h2>
   <div class="tabs">${Object.entries(THEMES).map(([k, [ic, label]]) => `<a href="javascript:void 0" class="${theme === k ? 'on' : ''}" onclick="setTheme('${k}'); render()">${icon(ic)} ${label}</a>`).join('')}</div>
-  ${cfg.googleClientId ? `<div class="list"><button class="danger" onclick="logout()"><span class="lead">${icon('logout')}</span>Sign out</button></div>` : ''}`;
+`;
 }
-async function logout() { await api('POST', '/api/logout'); cfg.authed = false; render(); }
 
 // ---------- shell ----------
 const routes = { home, workouts, workout, live, activities, activity, gyms, gym, ai, progress, insights, goals, more, stats: progress };
 const TAB_OF = { workout: 'workouts', live: 'workouts', progress: 'stats', insights: 'stats', activities: 'more', activity: 'more',
   gyms: 'more', gym: 'more', goals: 'more', ai: 'more' };
-function signIn() {
-  $('#nav').hidden = true;
-  $('#main').innerHTML = `<div class="hero" style="margin-top:18vh"><h1>Gym</h1><p>Sign in to continue.</p></div><div id="gbtn"></div><p id="err" class="error"></p>`;
-  const show = () => {
-    google.accounts.id.initialize({ client_id: cfg.googleClientId, callback: async ({ credential }) => {
-      try { await api('POST', '/api/login', { credential }); await boot(); } catch (e) { $('#err').textContent = e.message; }
-    } });
-    google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_black', size: 'large', shape: 'pill' });
-  };
-  if (window.google?.accounts) return show();
-  const s = document.createElement('script');
-  s.src = 'https://accounts.google.com/gsi/client';
-  s.onload = show;
-  document.head.append(s);
-}
 function render() {
-  if (!cfg.authed) return signIn();
   const [, name = 'home', id] = location.hash.split('/');
   const tab = TAB_OF[name] || name;
   const link = (h, label, ic) => `<a href="#/${h}" class="${h === tab ? 'on' : ''}">${icon(ic)}${label}</a>`;
@@ -1054,10 +1188,11 @@ function render() {
   tick();
 }
 async function boot() {
-  cfg = await (await fetch('/api/config')).json();
-  MUSCLES = cfg.muscles;
-  if (cfg.authed) S = await api('GET', '/api/data');
-  S.gyms ||= [];
+  S = await dbGet('data') || {};
+  for (const c of COLLECTIONS) S[c] ||= [];
+  for (const m of S.media) { const b = await dbGet('file:' + m.id); if (b) URLS[m.id] = URL.createObjectURL(b); }
+  navigator.storage?.persist?.(); // ask the browser not to evict our data
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   render();
 }
 $('#dialog').addEventListener('click', e => { if (e.target === $('#dialog')) closeDialog(); }); // tap backdrop to close
