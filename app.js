@@ -348,7 +348,7 @@ async function exportData() {
   toast('Preparing backup…');
   const files = {};
   for (const m of S.media) if (m.type.startsWith('image')) { const b = await dbGet('file:' + m.id); if (b) files[m.id] = await toDataUrl(b); }
-  const file = new File([JSON.stringify({ ...S, files })], `gym-backup-${today()}.json`, { type: 'application/json' });
+  const file = new File([JSON.stringify({ ...S, files })], `mygym-backup-${today()}.json`, { type: 'application/json' });
   if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file] }).catch(() => {}); // iPhone: Save to Files / iCloud
   const a = document.createElement('a');
   a.href = URL.createObjectURL(file);
@@ -360,8 +360,8 @@ async function importData(input) {
   input.value = '';
   if (!f) return;
   let data;
-  try { data = JSON.parse(await f.text()); } catch { return toast('That file is not a Gym backup', true); }
-  if (!Array.isArray(data.workouts) || !Array.isArray(data.activities)) return toast('That file is not a Gym backup', true);
+  try { data = JSON.parse(await f.text()); } catch { return toast('That file is not a myGym backup', true); }
+  if (!Array.isArray(data.workouts) || !Array.isArray(data.activities)) return toast('That file is not a myGym backup', true);
   if (!confirm('Replace everything on this phone with this backup?')) return;
   const { files = {}, ...rest } = data;
   await removeMedia(() => false);

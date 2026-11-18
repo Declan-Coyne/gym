@@ -1,6 +1,6 @@
-# Gym
+# myGym
 
-Personal workout tracker that runs entirely on your phone. No server and no account:
+myGym is a personal workout tracker that runs entirely on your phone. No server and no account:
 it's a web app you add to your iPhone home screen, and all data (workouts, photos, videos) is stored on the phone.
 
 ## Install on your iPhone
@@ -11,6 +11,12 @@ it's a web app you add to your iPhone home screen, and all data (workouts, photo
 3. Always open it from the home-screen icon. That copy keeps its own data. Safari tabs and other phones don't see it.
 
 It works offline after the first open (handy with bad gym signal); only the AI planner needs internet.
+
+## Updates
+
+Nothing to reinstall. Push changes to `main`. The next time the app opens with internet, it starts instantly from the
+version it already has and downloads the new one in the background. You get the new version the time after that.
+With no internet it just runs the last version it downloaded. Your data is never touched by an update.
 
 ## AI planner (Claude API key)
 

@@ -1,6 +1,6 @@
 {
-  "name": "Gym",
-  "short_name": "Gym",
+  "name": "myGym",
+  "short_name": "myGym",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#111827",
