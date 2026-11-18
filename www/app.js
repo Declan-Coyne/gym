@@ -33,6 +33,10 @@ const STARTER = [ // name | muscles | equipment
 ];
 const ICONS = {
   home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.7 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.7a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3M19 4l2 2"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
   dumbbell: '<path d="M6 6v12M18 6v12M3 9v6M21 9v6M6 12h12"/>',
   list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
   sparkles: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>',
@@ -64,14 +68,15 @@ const ICONS = {
   heart: '<path d="M12 20s-8-4.5-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 9c0 6.5-8 11-8 11z"/>',
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[n]}</svg>`;
-const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
-function platesFor(total, bar) { // greedy per-side plate list; `left` = kg that can't be made with these plates
+const PLATES = { kg: [25, 20, 15, 10, 5, 2.5, 1.25], lb: [45, 35, 25, 10, 5, 2.5] };
+const BARS = { kg: [20, 15, 10, 7], lb: [45, 35, 25, 15] };
+function platesFor(total, bar, plates = PLATES.kg) { // greedy per-side plate list; `left` = kg that can't be made with these plates
   let side = (total - bar) / 2;
   const out = [];
-  for (const p of PLATES) while (side >= p - 1e-9) { out.push(p); side -= p; }
+  for (const p of plates) while (side >= p - 1e-9) { out.push(p); side -= p; }
   return { out, left: +(side * 2).toFixed(2) };
 }
-console.assert(platesFor(100, 20).out.join() === '25,15' && platesFor(61, 20).left === 1 && !platesFor(20, 20).out.length, 'platesFor');
+console.assert(platesFor(100, 20).out.join() === '25,15' && platesFor(61, 20).left === 1 && !platesFor(20, 20).out.length && platesFor(225, 45, PLATES.lb).out.join() === '45,45', 'platesFor');
 
 const MUSCLES = ['Chest', 'Upper back', 'Lats', 'Traps', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Obliques',
   'Lower back', 'Glutes', 'Quads', 'Hamstrings', 'Calves', 'Hip flexors', 'Adductors', 'Abductors', 'Cardio'];
@@ -107,6 +112,7 @@ const URLS = {}; // media id -> object URL of its blob
 const fileUrl = m => URLS[m.id] || '';
 
 async function saveItem(col, item) {
+  if (col === 'workouts' && item.items) item = { ...item, items: item.items.map(x => (x.unit ? x : { ...x, unit: actUnit(x.activityId) })) };
   const i = S[col].findIndex(x => x.id === item.id);
   const saved = i < 0 ? { ...item, id: crypto.randomUUID(), createdAt: new Date().toISOString() }
     : { ...S[col][i], ...item, id: S[col][i].id, updatedAt: new Date().toISOString() };
@@ -137,14 +143,29 @@ const fmtDateTime = d => new Date(d).toLocaleString(undefined, { weekday: 'short
 const ago = d => { const h = (Date.now() - new Date(d)) / 36e5; return h < 1 ? 'just now' : h < 24 ? Math.round(h) + 'h ago' : Math.round(h / 24) + 'd ago'; };
 const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const num = v => parseFloat(v) || 0;
-const kg = v => v >= 10000 ? (v / 1000).toFixed(1) + '<small> t</small>' : Math.round(v).toLocaleString() + '<small> kg</small>';
+const kg = v => { // a total (volume) in the default exercise unit
+  const u = pref('weightUnit');
+  return v >= 10000 ? (v / 1000).toFixed(1) + `<small> ${u === 'kg' ? 't' : 'k lb'}</small>` : Math.round(v).toLocaleString() + `<small> ${u}</small>`;
+};
+// ---------- settings & units ----------
+const DEFAULTS = { weightUnit: 'kg', bodyUnit: 'kg', lengthUnit: 'cm', rest: 90, restSound: true, vibrate: true, bar: 20, barLb: 45,
+  aiModel: 'claude-opus-5-5' };
+const pref = k => S.settings?.[k] ?? DEFAULTS[k];
+async function setPref(k, v) { S.settings = { ...S.settings, [k]: v }; await persist(); }
+const LB = 0.45359237;
+const convW = (v, from, to) => (!v || from === to ? v : from === 'lb' ? v * LB : v / LB); // kg <-> lb
+const convL = (v, from, to) => (from === to ? v : from === 'in' && to === 'cm' ? v * 2.54 : from === 'cm' && to === 'in' ? v / 2.54 : v);
+const r1 = v => Math.round(v * 10) / 10;
+console.assert(r1(convW(100, 'kg', 'lb')) === 220.5 && r1(convW(225, 'lb', 'kg')) === 102.1 && convW(80, 'kg', 'kg') === 80, 'convW');
+const actUnit = aid => act(aid)?.unit || pref('weightUnit'); // each exercise can use its own unit
+const unitOf = i => i.unit || actUnit(i.activityId);          // each logged set keeps the unit it was logged in
 const byName = (a, b) => a.name.localeCompare(b.name);
 const act = id => S.activities.find(a => a.id === id);
 const getW = id => S.workouts.find(w => w.id === id);
 const completed = () => S.workouts.filter(w => w.completedAt).sort((a, b) => b.completedAt.localeCompare(a.completedAt));
 const workoutMuscles = w => [...new Set((w.items || []).flatMap(i => act(i.activityId)?.muscles || []))];
 const setsOf = i => i.setsDone ?? num(i.sets);
-const volume = w => (w.items || []).reduce((t, i) => t + setsOf(i) * num(i.reps) * num(i.weight), 0);
+const volume = w => (w.items || []).reduce((t, i) => t + setsOf(i) * num(i.reps) * convW(num(i.weight), unitOf(i), pref('weightUnit')), 0);
 const e1rm = (w, r) => (w > 0 && r > 0 ? w * (1 + r / 30) : 0); // Epley estimate
 const weekStart = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; };
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
@@ -163,13 +184,16 @@ const gymOfWorkout = w => gymById(w.gymId) || mainGym(); // older workouts witho
 const gymOptions = sel => S.gyms.map(g => `<option value="${g.id}" ${g.id === sel ? 'selected' : ''}>${esc(g.name)}${g.main ? ' ★' : ''}</option>`).join('');
 const availableAt = (a, gym) => !gym || (a.equipment || []).every(e => e === 'Bodyweight' || (gym.equipment || []).includes(e));
 
-function historyFor(aid) { // newest first
-  return completed().flatMap(w => (w.items || []).filter(i => i.activityId === aid)
-    .map(i => ({ date: w.completedAt, wid: w.id, sets: setsOf(i), reps: i.reps, weight: num(i.weight), e1rm: e1rm(num(i.weight), num(i.reps)) })));
+function historyFor(aid) { // newest first, weights converted to the exercise's current unit
+  const u = actUnit(aid);
+  return completed().flatMap(w => (w.items || []).filter(i => i.activityId === aid).map(i => {
+    const weight = r1(convW(num(i.weight), unitOf(i), u));
+    return { date: w.completedAt, wid: w.id, sets: setsOf(i), reps: i.reps, weight, e1rm: e1rm(weight, num(i.reps)) };
+  }));
 }
 function lastHint(aid) {
   const h = aid && historyFor(aid)[0];
-  return h ? `Last: <b>${h.sets}×${esc(h.reps)}${h.weight ? ' @ ' + h.weight + ' kg' : ''}</b> · ${fmtDate(h.date)}` : '';
+  return h ? `Last: <b>${h.sets}×${esc(h.reps)}${h.weight ? ' @ ' + h.weight + ' ' + actUnit(aid) : ''}</b> · ${fmtDate(h.date)}` : '';
 }
 
 // ---------- dialog, toast, theme ----------
@@ -376,8 +400,7 @@ async function importData(input) {
     await dbPut('file:' + id, blob);
     URLS[id] = URL.createObjectURL(blob);
   }
-  S = rest;
-  for (const c of COLLECTIONS) S[c] ||= [];
+  S = normalize(rest);
   S.media = S.media.filter(m => URLS[m.id]); // drop entries whose file wasn't in the backup (videos)
   await persist();
   toast('Backup restored');
@@ -411,7 +434,7 @@ const itemRow = (i = {}, n = '') => `<div class="item" data-i="${n}"><div class=
   <button type="button" class="ghost" title="Remove" onclick="this.closest('.item').remove(); updateMuscles()">${icon('x')}</button></div></div>
   <div class="nums"><div><label>Sets</label><input name="sets" inputmode="numeric" value="${esc(i.sets)}"></div>
   <div><label>Reps</label><input name="reps" value="${esc(i.reps)}"></div>
-  <div><label>Weight (kg)</label><input name="weight" inputmode="decimal" value="${esc(i.weight)}"></div></div>
+  <div><label>Weight (<span data-unit>${i.activityId ? unitOf(i) : pref('weightUnit')}</span>)</label><input name="weight" inputmode="decimal" value="${esc(i.weight)}"></div></div>
   <input type="hidden" name="inotes" value="${esc(i.notes)}">
   <div class="hint" data-hint>${lastHint(i.activityId)}</div>${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}</div>`;
 function workout(id) {
@@ -451,6 +474,7 @@ function moveItem(btn, dir) {
 function pickActivity(sel) {
   const el = sel.closest('.item'), last = historyFor(sel.value)[0];
   el.querySelector('[data-hint]').innerHTML = lastHint(sel.value);
+  el.querySelector('[data-unit]').textContent = actUnit(sel.value);
   if (!last) return;
   for (const [k, v] of [['sets', last.sets], ['reps', last.reps], ['weight', last.weight || '']]) {
     const input = el.querySelector(`[name="${k}"]`);
@@ -467,8 +491,12 @@ async function saveWorkout(e, id, then) {
   if (!f.reportValidity()) return;
   const v = (el, n) => el.querySelector(`[name="${n}"]`).value;
   const old = getW(id)?.items || [];
-  const items = [...f.querySelectorAll('.item')].map(el => ({ ...old[el.dataset.i], // keeps setsDone when rows are reordered
-    activityId: v(el, 'activityId'), sets: v(el, 'sets'), reps: v(el, 'reps'), weight: v(el, 'weight'), notes: v(el, 'inotes') }));
+  const items = [...f.querySelectorAll('.item')].map(el => {
+    const o = old[el.dataset.i], aid = v(el, 'activityId');
+    return { ...o, // keeps setsDone when rows are reordered
+      activityId: aid, sets: v(el, 'sets'), reps: v(el, 'reps'), weight: v(el, 'weight'), notes: v(el, 'inotes'),
+      unit: (o?.activityId === aid && o.unit) || actUnit(aid) };
+  });
   const w = await saveItem('workouts', { ...getW(id), name: f.elements.name.value.trim(), date: f.elements.date.value,
     gymId: f.elements.gymId?.value || null, notes: f.elements.notes.value, items });
   if (then === 'live') return startWorkout(w.id);
@@ -504,15 +532,15 @@ function newRecords(w) { // heavier than any previous completed session of the s
   const best = {};
   for (const i of w.items || []) {
     if (!num(i.weight) || !setsOf(i)) continue;
+    const u = actUnit(i.activityId), now = r1(convW(num(i.weight), unitOf(i), u));
     const prev = Math.max(0, ...historyFor(i.activityId).filter(h => h.wid !== w.id).map(h => h.weight));
-    if (prev && num(i.weight) > prev && num(i.weight) > (best[i.activityId]?.now || 0))
-      best[i.activityId] = { name: act(i.activityId)?.name, now: num(i.weight), prev };
+    if (prev && now > prev && now > (best[i.activityId]?.now || 0)) best[i.activityId] = { name: act(i.activityId)?.name, now, prev, unit: u };
   }
   return Object.values(best);
 }
 function celebrate(prs) {
   openDialog(`<div style="text-align:center"><div style="font-size:56px">🏆</div><h1>New personal record${prs.length > 1 ? 's' : ''}!</h1></div>
-    ${prs.map(p => `<div class="card spread"><b>${esc(p.name)}</b><span><b>${p.now} kg</b> <span class="muted small">was ${p.prev}</span></span></div>`).join('')}
+    ${prs.map(p => `<div class="card spread"><b>${esc(p.name)}</b><span><b>${p.now} ${p.unit}</b> <span class="muted small">was ${p.prev}</span></span></div>`).join('')}
     <form method="dialog" class="actions" style="justify-content:center"><button class="primary">Let's go</button></form>`);
 }
 async function uncomplete(id) {
@@ -539,27 +567,29 @@ function showHowTo(id) {
 }
 
 // ---------- plate calculator ----------
-function plateDialog(weight = 0) {
+function plateDialog(weight = 0, unit = pref('weightUnit')) {
+  const barKey = unit === 'lb' ? 'barLb' : 'bar';
   openDialog(`<h1 style="margin-top:0">Plate calculator</h1>
-    <div class="row"><div class="grow"><label>Target weight (kg)</label><input id="pw" type="number" step="any" inputmode="decimal" value="${weight || ''}" oninput="plateCalc()"></div>
-    <div class="grow"><label>Bar (kg)</label><select id="pb" onchange="store.set('bar', this.value); plateCalc()">
-    ${[20, 15, 10, 7].map(b => `<option ${+store.get('bar', '20') === b ? 'selected' : ''}>${b}</option>`).join('')}</select></div></div>
+    <div class="seg">${['kg', 'lb'].map(u => `<button class="${u === unit ? 'on' : ''}" onclick="plateDialog(num($('#pw').value), '${u}')">${u}</button>`).join('')}</div>
+    <div class="row"><div class="grow"><label style="margin-top:0">Target weight (${unit})</label><input id="pw" type="number" step="any" inputmode="decimal" value="${weight || ''}" oninput="plateCalc()"></div>
+    <div class="grow"><label style="margin-top:0">Bar (${unit})</label><select id="pb" data-unit="${unit}" onchange="setPref('${barKey}', +this.value); plateCalc()">
+    ${BARS[unit].map(b => `<option ${pref(barKey) === b ? 'selected' : ''}>${b}</option>`).join('')}</select></div></div>
     <div id="pout"></div><form method="dialog" class="actions"><button>Close</button></form>`);
   plateCalc();
 }
 function plateCalc() {
-  const w = num($('#pw').value), bar = num($('#pb').value);
-  if (w < bar) return void ($('#pout').innerHTML = `<p class="muted">Enter at least the bar weight (${bar} kg).</p>`);
+  const w = num($('#pw').value), bar = num($('#pb').value), unit = $('#pb').dataset.unit, step = unit === 'lb' ? 5 : 2.5;
+  if (w < bar) return void ($('#pout').innerHTML = `<p class="muted">Enter at least the bar weight (${bar} ${unit}).</p>`);
   const show = t => {
-    const { out, left } = platesFor(t, bar);
+    const { out, left } = platesFor(t, bar, PLATES[unit]);
     return (out.length ? out.map(p => `<span class="plate p${String(p).replace('.', '_')}">${p}</span>`).join('') : '<span class="muted small">Empty bar</span>')
-      + (left ? `<span class="muted small">+${left} kg can't be made</span>` : '');
+      + (left ? `<span class="muted small">+${left} ${unit} can't be made</span>` : '');
   };
-  const round = x => Math.max(bar, Math.round(x / 2.5) * 2.5);
+  const round = x => Math.max(bar, Math.round(x / step) * step);
   const warm = [[bar, 10], [round(w * .4), 5], [round(w * .6), 3], [round(w * .8), 2]]
     .filter(([x], i, all) => x < w && (i === 0 || x > all[i - 1][0]));
   $('#pout').innerHTML = `<h2>Each side</h2><div class="plates">${show(w)}</div>
-    ${warm.length ? `<h2>Warm-up sets</h2><table class="hist">${warm.map(([x, r]) => `<tr><td style="white-space:nowrap"><b>${x} kg</b> × ${r}</td>
+    ${warm.length ? `<h2>Warm-up sets</h2><table class="hist">${warm.map(([x, r]) => `<tr><td style="white-space:nowrap"><b>${x} ${unit}</b> × ${r}</td>
     <td><div class="plates small">${show(x)}</div></td></tr>`).join('')}</table>` : ''}`;
 }
 
@@ -572,7 +602,7 @@ async function startWorkout(id) {
 function live(id) {
   const w = getW(id);
   if (!w) return empty('dumbbell', 'Workout not found.');
-  const rest = store.get('rest', '90'), gym = gymOfWorkout(w);
+  const rest = pref('rest'), gym = gymOfWorkout(w);
   const total = (w.items || []).reduce((t, i) => t + Math.max(1, num(i.sets)), 0);
   const doneSets = (w.items || []).reduce((t, i) => t + Math.min(i.setsDone || 0, Math.max(1, num(i.sets))), 0);
   const avail = [...S.activities].sort(byName).filter(a => availableAt(a, gym));
@@ -583,18 +613,18 @@ function live(id) {
   ${(w.items || []).map((i, n) => {
     const a = act(i.activityId), sets = Math.max(1, num(i.sets)), done = i.setsDone || 0;
     return `<div class="item ${done >= sets ? 'complete' : ''}"><div class="spread"><h3>${esc(a?.name || 'Deleted exercise')}</h3>
-      <div class="item-tools"><button class="ghost" title="Plate calculator" onclick="plateDialog(${num(i.weight)})">${icon('disc')}</button>
+      <div class="item-tools"><button class="ghost" title="Plate calculator" onclick="plateDialog(${num(i.weight)}, '${unitOf(i)}')">${icon('disc')}</button>
       <button class="ghost" title="Swap exercise" onclick="swapDialog('${id}', ${n})">${icon('swap')}</button>
       <button class="ghost" title="How-to" onclick="showHowTo('${i.activityId}')">${icon('info')}</button></div></div>
       ${i.notes ? `<div class="hint">${esc(i.notes)}</div>` : ''}<div class="hint">${lastHint(i.activityId)}</div>
       <div class="nums"><div><label>Reps</label><input value="${esc(i.reps)}" onchange="liveEdit(${n}, 'reps', this.value)"></div>
-      <div><label>Weight (kg)</label><input inputmode="decimal" value="${esc(i.weight)}" onchange="liveEdit(${n}, 'weight', this.value)"></div>
+      <div><label>Weight (${unitOf(i)})</label><input inputmode="decimal" value="${esc(i.weight)}" onchange="liveEdit(${n}, 'weight', this.value)"></div>
       <div><label>Sets</label><input inputmode="numeric" value="${esc(i.sets)}" onchange="liveEdit(${n}, 'sets', this.value)"></div></div>
       <div class="sets">${[...Array(sets)].map((_, s) => `<button class="set ${s < done ? 'done' : ''}" onclick="tapSet('${id}', ${n}, ${s})">${s < done ? '✓' : s + 1}</button>`).join('')}</div></div>`;
   }).join('') || empty('dumbbell', 'No exercises yet. Add one below.')}
   <select onchange="liveAdd('${id}', this.value)" style="margin-bottom:12px"><option value="">＋ Add an exercise${gym ? ' (available at ' + esc(gym.name) + ')' : ''}…</option>
     ${avail.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
-  <div class="row"><span class="muted">Rest timer</span><select style="width:auto" onchange="store.set('rest', this.value); toast('Rest timer ' + mmss(this.value))">
+  <div class="row"><span class="muted">Rest timer</span><select style="width:auto" onchange="setPref('rest', +this.value); toast('Rest timer ' + mmss(this.value))">
     ${[45, 60, 90, 120, 180, 240].map(s => `<option value="${s}" ${+rest === s ? 'selected' : ''}>${mmss(s)}</option>`).join('')}</select>
     <a class="btn small" href="#/workout/${id}">Edit workout</a></div>`;
 }
@@ -618,7 +648,7 @@ function swapDialog(id, n) { // e.g. machine taken: offer exercises at this gym 
 }
 async function doSwap(id, n, aid) {
   const w = getW(id), last = historyFor(aid)[0];
-  w.items[n] = { ...w.items[n], activityId: aid, weight: String(last?.weight || ''), notes: '' };
+  w.items[n] = { ...w.items[n], activityId: aid, weight: String(last?.weight || ''), unit: actUnit(aid), notes: '' };
   closeDialog();
   await saveItem('workouts', w);
   toast('Swapped to ' + act(aid).name);
@@ -650,11 +680,11 @@ async function tapSet(id, n, s) {
   render();
 }
 let restEnd = 0;
-function startRest() { restEnd = Date.now() + +store.get('rest', '90') * 1000; tick(); }
+function startRest() { restEnd = Date.now() + pref('rest') * 1000; tick(); }
 function addRest(s) { restEnd += s * 1000; tick(); }
 function stopRest() { restEnd = 0; tick(); }
 function beep() {
-  if (!audio) return;
+  if (!audio || !pref('restSound')) return;
   for (const t of [0, 0.25, 0.5]) {
     const o = audio.createOscillator(), g = audio.createGain();
     o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
@@ -666,7 +696,7 @@ function tick() {
   const el = $('#elapsed');
   if (el?.dataset.start) el.textContent = mmss((Date.now() - new Date(el.dataset.start)) / 1000);
   const left = Math.ceil((restEnd - Date.now()) / 1000);
-  if (restEnd && left <= 0) { restEnd = 0; beep(); navigator.vibrate?.([200, 100, 200]); }
+  if (restEnd && left <= 0) { restEnd = 0; beep(); if (pref('vibrate')) navigator.vibrate?.([200, 100, 200]); }
   $('#rest').hidden = !restEnd;
   if (restEnd) $('#rest b').textContent = mmss(left);
 }
@@ -684,7 +714,7 @@ function activities() {
     const n = S.media.filter(m => m.activityId === a.id).length, yt = (a.youtube || []).length;
     const pr = Math.max(0, ...historyFor(a.id).map(h => h.weight));
     return `<a class="card" data-q="${esc((a.name + ' ' + (a.muscles || []).join(' ') + ' ' + (a.equipment || []).join(' ')).toLowerCase())}" href="#/activity/${a.id}">
-      <div class="spread"><h3>${esc(a.name)}</h3><span class="w-meta" style="margin:0">${pr ? `<span>${icon('trophy')} ${pr} kg</span>` : ''}
+      <div class="spread"><h3>${esc(a.name)}</h3><span class="w-meta" style="margin:0">${pr ? `<span>${icon('trophy')} ${pr} ${actUnit(a.id)}</span>` : ''}
       ${yt ? `<span>${icon('play')} ${yt}</span>` : ''}${n ? `<span>${icon('camera')} ${n}</span>` : ''}</span></div>
       ${(a.equipment || []).length ? `<div class="hint">${esc(a.equipment.join(' · '))}</div>` : ''}${chips(a.muscles || [])}</a>`;
   }).join('') || empty('list', onlyGym ? `Nothing matches at ${esc(gym.name)}. Add its equipment on the gym page.` : 'No exercises yet.')}
@@ -705,16 +735,16 @@ async function addStarter() {
 function activity(id) {
   if (id === 'new') id = '';
   const a = act(id) || { name: '', muscles: [], equipment: [], notes: '' };
-  const hist = a.id ? historyFor(a.id) : [];
+  const hist = a.id ? historyFor(a.id) : [], u = a.unit || pref('weightUnit');
   const pr = Math.max(0, ...hist.map(h => h.weight)), best = Math.max(0, ...hist.map(h => h.e1rm));
   const perSession = [...hist].reverse().filter(h => h.weight);
   const equipOptions = [...new Set(['Bodyweight', ...EQUIPMENT, ...S.gyms.flatMap(g => g.equipment || []), ...(a.equipment || [])])];
   const notAt = a.id ? S.gyms.filter(g => !availableAt(a, g)) : [];
   return `${head(a.id ? esc(a.name) : 'New exercise', a.id ? '' : 'Name it, tick the muscles and the equipment it needs.')}
-  ${hist.length ? `<div class="pr"><div class="stat"><b>${pr || '–'}${pr ? '<small> kg</small>' : ''}</b><span>Heaviest</span></div>
-    <div class="stat"><b>${best ? Math.round(best) : '–'}${best ? '<small> kg</small>' : ''}</b><span>Est. 1-rep max</span></div>
+  ${hist.length ? `<div class="pr"><div class="stat"><b>${pr || '–'}${pr ? `<small> ${u}</small>` : ''}</b><span>Heaviest</span></div>
+    <div class="stat"><b>${best ? Math.round(best) : '–'}${best ? `<small> ${u}</small>` : ''}</b><span>Est. 1-rep max</span></div>
     <div class="stat"><b>${hist.length}</b><span>Times done</span></div></div>
-    ${perSession.length > 1 ? `<div class="card" style="margin-top:10px"><div class="muted small">Weight over time</div>${lineChart(perSession.map(h => ({ x: h.date, y: h.weight })), 'kg')}</div>` : ''}` : ''}
+    ${perSession.length > 1 ? `<div class="card" style="margin-top:10px"><div class="muted small">Weight over time</div>${lineChart(perSession.map(h => ({ x: h.date, y: h.weight })), u)}</div>` : ''}` : ''}
   ${notAt.length ? `<div class="card info-card"><span class="ic-wrap">${icon('pin')}</span><div class="small">Not available at <b>${notAt.map(g => esc(g.name)).join(', ')}</b> (missing equipment).</div></div>` : ''}
   ${a.id ? `<h2>YouTube</h2>${ytList(a, true)}
     <form class="row" style="margin-top:10px" onsubmit="addYoutube(event, '${a.id}')"><input class="grow" name="url" type="url" placeholder="Paste a YouTube link" required>
@@ -725,18 +755,21 @@ function activity(id) {
     <label style="margin-top:0">Name</label><input name="name" value="${esc(a.name)}" required placeholder="Bench press">
     <label>Muscles worked</label>${muscleChecks(a.muscles)}
     <label>Equipment needed</label>${tiles('equipment', equipOptions, a.equipment || [])}
+    <label>Weight unit for this exercise</label>
+    <div class="busy-pick" style="grid-template-columns:1fr 1fr">${['kg', 'lb'].map(x => `<label><input type="radio" name="unit" value="${x}" ${u === x ? 'checked' : ''}><span>${x}</span></label>`).join('')}</div>
+    <p class="hint">Past sets keep the unit they were logged in and are converted for charts and records.</p>
     <label>How-to notes</label><textarea name="notes" placeholder="Grip, setup, cues…">${esc(a.notes)}</textarea>
     <div class="actions"><button class="primary">Save</button>
       ${a.id ? `<button type="button" class="danger" onclick="deleteActivity('${a.id}')">Delete</button>` : ''}</div></form>
   ${a.id ? '' : '<p class="muted">Save first, then add YouTube links, photos and videos.</p>'}
   ${hist.length ? `<h2>History</h2><table class="hist">${hist.slice(0, 15).map(h => `<tr><td><a href="#/workout/${h.wid}">${fmtDate(h.date)}</a></td>
-    <td>${h.sets} × ${esc(h.reps)}</td><td>${h.weight ? h.weight + ' kg' : ''}</td></tr>`).join('')}</table>` : ''}`;
+    <td>${h.sets} × ${esc(h.reps)}</td><td>${h.weight ? h.weight + ' ' + u : ''}</td></tr>`).join('')}</table>` : ''}`;
 }
 async function saveActivity(e, id) {
   e.preventDefault();
   const f = e.target;
   const a = await saveItem('activities', { ...act(id), name: f.elements.name.value.trim(), muscles: checked(f, 'muscles'),
-    equipment: checked(f, 'equipment'), notes: f.elements.notes.value });
+    equipment: checked(f, 'equipment'), unit: checked(f, 'unit')[0], notes: f.elements.notes.value });
   toast('Exercise saved');
   location.hash = id ? '#/activities' : '#/activity/' + a.id;
 }
@@ -849,14 +882,14 @@ async function suggest({ minutes, muscles, notes, gymId }) {
     goals: S.goals.filter(g => !g.done).map(g => ({ goal: g.text, targetDate: g.targetDate })),
     recentWorkouts: [...completed()].sort((a, b) => b.completedAt.localeCompare(a.completedAt)).slice(0, 8)
       .map(w => ({ completed: w.completedAt, name: w.name, feel: w.feel || null, items: (w.items || []).map(i => ({
-        name: act(i.activityId)?.name, muscles: act(i.activityId)?.muscles, sets: i.sets, reps: i.reps, weight: i.weight })) })),
-    library: S.activities.map(a => ({ id: a.id, name: a.name, muscles: a.muscles, equipment: a.equipment || [] })),
+        name: act(i.activityId)?.name, muscles: act(i.activityId)?.muscles, sets: i.sets, reps: i.reps, weight: i.weight, unit: unitOf(i) })) })),
+    library: S.activities.map(a => ({ id: a.id, name: a.name, muscles: a.muscles, equipment: a.equipment || [], weightUnit: actUnit(a.id) })),
   };
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true }); // key is the user's own, stored only on their phone
   let msg;
   try {
     msg = await client.beta.messages.create({
-      model: 'claude-opus-5-5',
+      model: pref('aiModel'),
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
@@ -865,7 +898,7 @@ async function suggest({ minutes, muscles, notes, gymId }) {
         + 'Fit the session inside minutesAvailable including warm-up and rest. Prioritise targetMuscles if given; otherwise '
         + 'pick muscles that recent workouts have not trained in the last ~48 hours. Serve the client\'s goals. '
         + 'Prefer activities from their library (use its id); add a new activity with activityId "" only when needed. '
-        + 'Base weight suggestions on their recent weights. Each recent workout has feel from 1 (rough) to 5 (great): '
+        + 'Base weight suggestions on their recent weights, in each exercise\'s weightUnit (kg or lb). Each recent workout has feel from 1 (rough) to 5 (great): '
         + 'if recent sessions felt rough, ease off volume; if they felt great, progress. '
         + 'If gym.equipmentAvailable is given, only pick exercises whose equipment is all in that list (an empty equipment list '
         + 'means unknown, treat as available); new exercises must also only need that equipment, using the same equipment names. '
@@ -946,7 +979,8 @@ function lineChart(points, unit = '') {
 }
 // ---------- body weight ----------
 const isWeight = m => m.type.trim().toLowerCase() === 'weight';
-const weights = () => S.measurements.filter(isWeight).sort((a, b) => a.date.localeCompare(b.date));
+const weights = () => S.measurements.filter(isWeight).sort((a, b) => a.date.localeCompare(b.date)) // shown in the body-weight unit setting
+  .map(m => ({ ...m, value: r1(convW(m.value, (m.unit || 'kg').toLowerCase() === 'lb' ? 'lb' : 'kg', pref('bodyUnit'))), unit: pref('bodyUnit') }));
 const weightOn = date => weights().filter(m => m.date <= date).at(-1); // latest weigh-in on or before a date
 let weightRange = 90;
 function weightCard(days, compact) {
@@ -973,7 +1007,7 @@ function logWeightDialog() {
   const last = weights().at(-1);
   openDialog(`<form onsubmit="saveWeight(event)"><h1 style="margin-top:0">Log weight</h1>
     <div class="row"><div class="grow"><label>Weight</label><input name="val" type="number" step="0.1" min="1" inputmode="decimal" value="${last?.value ?? ''}" required autofocus></div>
-    <div style="width:96px"><label>Unit</label><select name="unit">${['kg', 'lb'].map(u => `<option ${(last?.unit || 'kg') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></div>
+    <div style="width:96px"><label>Unit</label><select name="unit">${['kg', 'lb'].map(u => `<option ${pref('bodyUnit') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></div>
     <label>Date</label><input type="date" name="date" value="${today()}" required>
     <div class="actions"><button class="primary">Save</button><button type="button" onclick="closeDialog()">Cancel</button></div></form>`);
 }
@@ -1019,7 +1053,7 @@ function progress() {
   <form class="card" onsubmit="addMeasurement(event)"><div class="row">
     <input class="grow" name="mtype" list="mtypes" placeholder="Measurement (e.g. Weight)" required oninput="fillUnit(this)">
     <input class="grow" name="val" type="number" step="any" inputmode="decimal" placeholder="Value" required></div>
-    <div class="row" style="margin-top:8px"><input class="grow" name="unit" placeholder="Unit (kg, cm…)">
+    <div class="row" style="margin-top:8px"><input class="grow" name="unit" placeholder="Unit (cm, in, %…)" value="${pref('lengthUnit')}">
     <input class="grow" type="date" name="date" value="${today()}" required>
     <button class="primary">${icon('plus')} Log</button></div>
     <datalist id="mtypes">${types.map(t => `<option value="${esc(t)}">`).join('')}</datalist></form>
@@ -1028,9 +1062,12 @@ function progress() {
 function fillUnit(input) {
   const prev = [...S.measurements].reverse().find(m => m.type.toLowerCase() === input.value.trim().toLowerCase());
   const unit = input.form.elements.unit;
-  if (prev && !unit.value) unit.value = prev.unit;
+  const t = input.value.trim().toLowerCase();
+  unit.value = /fat|%/.test(t) ? '%' : t === 'weight' ? pref('bodyUnit') : /^(cm|in)$/.test(prev?.unit) ? pref('lengthUnit') : prev?.unit || pref('lengthUnit');
 }
 function measureCard(type, list) {
+  const lu = pref('lengthUnit'); // lengths are shown in the chosen unit whatever they were logged in
+  list = list.map(m => (/^(cm|in)$/.test(m.unit) ? { ...m, value: r1(convL(m.value, m.unit, lu)), unit: lu } : m));
   const first = list[0], last = list.at(-1), diff = +(last.value - first.value).toFixed(2);
   return `<details class="card"><summary class="spread"><h3>${esc(type)}</h3><span><b>${last.value}</b> ${esc(last.unit)}
     <span class="muted small">${list.length > 1 ? (diff >= 0 ? '+' : '') + diff : ''}</span></span></summary>
@@ -1154,7 +1191,7 @@ async function delGoal(id) { if (await delItem('goals', id)) render(); }
 
 // ---------- more ----------
 function more() {
-  const theme = store.get('theme', 'system'), gym = mainGym();
+  const gym = mainGym();
   const row = (href, ic, label, trail = '') => `<a href="${href}"><span class="lead">${icon(ic)}</span>${label}<span class="trail">${trail}${icon('right')}</span></a>`;
   return `${head('More')}
   <div class="list">
@@ -1162,21 +1199,55 @@ function more() {
     ${row('#/gyms', 'pin', 'Gyms', gym ? esc(gym.name) : 'Add one')}
     ${row('#/goals', 'target', 'Goals', S.goals.filter(g => !g.done).length + ' open')}
     ${row('#/ai', 'sparkles', 'AI workout plan')}
-    <button onclick="keyDialog()"><span class="lead">${icon('sparkles')}</span>Claude API key<span class="trail">${store.get('apiKey') ? 'Saved' : 'Not set'}${icon('right')}</span></button></div>
-  <h2>Tools</h2><div class="list">
-    <button onclick="plateDialog()"><span class="lead">${icon('disc')}</span>Plate calculator<span class="trail">${icon('right')}</span></button>
-    <button onclick="exportData()"><span class="lead">${icon('download')}</span>Back up data<span class="trail">JSON</span></button>
-    <label><span class="lead">${icon('plus')}</span>Restore backup<input type="file" accept="application/json,.json" hidden onchange="importData(this)"><span class="trail">${icon('right')}</span></label></div>
-  <p class="hint">Everything is stored only on this phone. Back up now and then (photos included, videos not).</p>
+    <button onclick="plateDialog()"><span class="lead">${icon('disc')}</span>Plate calculator<span class="trail">${icon('right')}</span></button></div>
+  <div class="list">${row('#/settings', 'gear', 'Settings', UPD.state === 'ready' ? '<span class="badge plan">Update ready</span>' : '')}</div>`;
+}
+
+// ---------- settings ----------
+function settings() {
+  const theme = store.get('theme', 'system');
+  const seg = (key, opts) => `<div class="seg" style="margin:0">${opts.map(([v, label]) => `<button class="${pref(key) === v ? 'on' : ''}"
+    onclick="setPref('${key}', ${JSON.stringify(v).replace(/"/g, '&quot;')}).then(render)">${label}</button>`).join('')}</div>`;
+  const line = (label, ctl, hint = '') => `<div class="set-row"><div><b>${label}</b>${hint ? `<div class="hint" style="margin:0">${hint}</div>` : ''}</div>${ctl}</div>`;
+  const toggle = key => `<input type="checkbox" class="switch" ${pref(key) ? 'checked' : ''} onchange="setPref('${key}', this.checked)">`;
+  return `${head('Settings')}
+  <h2>Units</h2><div class="card">
+    ${line('Exercise weights', seg('weightUnit', [['kg', 'kg'], ['lb', 'lb']]), 'Default for new exercises and totals. Each exercise can have its own unit on its page.')}
+    ${line('Body weight', seg('bodyUnit', [['kg', 'kg'], ['lb', 'lb']]))}
+    ${line('Body measurements', seg('lengthUnit', [['cm', 'cm'], ['in', 'in']]))}</div>
+  <h2>Workouts</h2><div class="card">
+    ${line('Rest timer', `<select style="width:auto" onchange="setPref('rest', +this.value)">${[45, 60, 90, 120, 180, 240].map(x => `<option value="${x}" ${pref('rest') === x ? 'selected' : ''}>${mmss(x)}</option>`).join('')}</select>`)}
+    ${line('Beep when rest ends', toggle('restSound'))}
+    ${line('Vibrate when rest ends', toggle('vibrate'))}
+    ${line('Default bar (kg)', `<select style="width:auto" onchange="setPref('bar', +this.value)">${BARS.kg.map(x => `<option ${pref('bar') === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`)}
+    ${line('Default bar (lb)', `<select style="width:auto" onchange="setPref('barLb', +this.value)">${BARS.lb.map(x => `<option ${pref('barLb') === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`)}</div>
   <h2>Appearance</h2>
   <div class="tabs">${Object.entries(THEMES).map(([k, [ic, label]]) => `<a href="javascript:void 0" class="${theme === k ? 'on' : ''}" onclick="setTheme('${k}'); render()">${icon(ic)} ${label}</a>`).join('')}</div>
-`;
+  <h2>AI planner</h2><div class="list">
+    <button onclick="keyDialog()"><span class="lead">${icon('key')}</span>Claude API key<span class="trail">${store.get('apiKey') ? 'Saved' : 'Not set'}${icon('right')}</span></button></div>
+  <div class="card">${line('Model', `<select style="width:auto" onchange="setPref('aiModel', this.value)">${[['claude-opus-5-5', 'Claude Opus 5.5 (best)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)']]
+    .map(([v, l]) => `<option value="${v}" ${pref('aiModel') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
+  <h2>Your data</h2><div class="list">
+    <button onclick="exportData()"><span class="lead">${icon('download')}</span>Back up data<span class="trail">JSON</span></button>
+    <label><span class="lead">${icon('plus')}</span>Restore backup<input type="file" accept="application/json,.json" hidden onchange="importData(this)"><span class="trail">${icon('right')}</span></label>
+    <button class="danger" onclick="eraseAll()"><span class="lead">${icon('trash')}</span>Delete all data</button></div>
+  <p class="hint">Everything is stored only on this phone. Back up now and then (photos included, videos not).</p>
+  <h2>App</h2><div class="card" id="appinfo"><p class="muted">Loading…</p></div>`;
+}
+async function eraseAll() {
+  if (!confirm('Delete ALL workouts, exercises, gyms, goals, measurements, photos and videos on this phone?')) return;
+  if (!confirm('Really delete everything? This can\'t be undone. Settings and your API key are kept.')) return;
+  await removeMedia(() => false);
+  S = normalize({ settings: S.settings });
+  await persist();
+  toast('All data deleted');
+  location.hash = '#/home';
 }
 
 // ---------- shell ----------
-const routes = { home, workouts, workout, live, activities, activity, gyms, gym, ai, progress, insights, goals, more, stats: progress };
+const routes = { home, workouts, workout, live, activities, activity, gyms, gym, ai, progress, insights, goals, more, settings, stats: progress };
 const TAB_OF = { workout: 'workouts', live: 'workouts', progress: 'stats', insights: 'stats', activities: 'more', activity: 'more',
-  gyms: 'more', gym: 'more', goals: 'more', ai: 'more' };
+  gyms: 'more', gym: 'more', goals: 'more', ai: 'more', settings: 'more' };
 function render() {
   const [, name = 'home', id] = location.hash.split('/');
   const tab = TAB_OF[name] || name;
@@ -1190,34 +1261,95 @@ function render() {
   if (render.page !== page) { scrollTo(0, 0); $('#main').style.animation = 'none'; void $('#main').offsetWidth; $('#main').style.animation = ''; }
   render.page = page;
   if ($('#muscles')) updateMuscles();
+  if ($('#appinfo')) appInfo();
   keepAwake(name === 'live');
   tick();
 }
 // ---------- in-app updates (iPhone app only) ----------
-// GitHub Actions publishes www/ as a zip on the 'updates' branch after every push. On launch we confirm this version
-// works, then check for a newer one, download it in the background and queue it for the next launch.
-// Offline, the check just fails and the last downloaded version keeps running.
+// GitHub Actions publishes www/ as a zip on the 'updates' branch, with its SHA-256 checksum and version, after every
+// change. On launch (and when the app comes back to the foreground) we check that file, download a newer zip in the
+// background (the updater verifies the checksum before unpacking it) and queue it; it's installed the next time the
+// app is closed or switched away from. Offline the check just fails and the current version keeps running.
+// A version that fails to start (never calls notifyAppReady) is rolled back automatically.
 const UPDATES = 'https://raw.githubusercontent.com/Declan-Coyne/gym/updates/version.json';
-async function checkForUpdate() {
-  const U = window.Capacitor?.Plugins?.CapacitorUpdater;
-  if (!U) return;
-  await U.notifyAppReady(); // without this the plugin rolls back to the previous version
-  const latest = await (await fetch(UPDATES, { cache: 'no-store' })).json();
-  const { bundle } = await U.current();
-  if (!latest.version || latest.version === bundle.version || latest.version === store.get('queuedVersion')) return;
-  const b = await U.download({ url: latest.url, version: latest.version });
-  await U.next({ id: b.id });
-  store.set('queuedVersion', latest.version);
-  toast('Update downloaded — it’s used next time you open myGym');
+const updater = () => window.Capacitor?.Plugins?.CapacitorUpdater;
+const BUILD = fetch('build.json', { cache: 'no-store' }).then(r => r.json()).catch(() => ({ version: 'dev' })); // written by CI
+let UPD = { state: 'idle' };
+async function checkForUpdate(manual) {
+  const U = updater();
+  if (!U) { if (manual) { UPD = { state: 'error', msg: 'Updates only work in the installed iPhone app.' }; appInfo(); } return; }
+  if (UPD.state === 'checking' || UPD.state === 'downloading') return;
+  UPD = { state: 'checking' }; appInfo();
+  try {
+    const r = await fetch(UPDATES + '?t=' + Date.now(), { cache: 'no-store' }); // query skips GitHub's 5-minute cache
+    if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+    const latest = await r.json(), running = (await BUILD).version;
+    store.set('lastUpdateCheck', new Date().toISOString());
+    const queued = await U.getNextBundle().catch(() => null);
+    if (latest.version === running) UPD = { state: 'latest' };
+    else if (queued?.version === latest.version && queued.status === 'success') UPD = { state: 'ready', ...latest };
+    else {
+      if (!/^[0-9a-f]{64}$/.test(latest.checksum || '')) throw Object.assign(new Error('The update has no valid checksum, so it was not installed.'), { mine: true });
+      UPD = { state: 'downloading', ...latest }; appInfo();
+      const b = await U.download({ url: latest.url, version: latest.version, checksum: latest.checksum });
+      await U.next({ id: b.id });
+      UPD = { state: 'ready', ...latest };
+      if (!manual) toast('Update downloaded. It installs next time you open myGym.');
+    }
+  } catch (e) {
+    UPD = { state: 'error', msg: !e.mine && /checksum/i.test(e.message || '') ? 'Download was damaged (checksum mismatch), so it was not installed. Try again.' : (e.message || String(e)) };
+  }
+  appInfo();
+  if (location.hash === '#/more') render();
+}
+const fmtVersion = b => b?.version && b.version !== 'dev' ? `${b.version}${b.date ? ' · ' + fmtDateTime(b.date) : ''}` : 'Development build';
+async function appInfo() {
+  if (!$('#appinfo')) return;
+  const ticket = appInfo.n = (appInfo.n || 0) + 1; // only the newest call may write (calls overlap while updating)
+  const U = updater(), build = await BUILD, last = store.get('lastUpdateCheck');
+  let source = 'Browser preview';
+  if (U) { try { const { bundle, native } = await U.current(); source = bundle.id === 'builtin' ? `Installed app (iOS build ${esc(native)})` : 'Downloaded update'; } catch {} }
+  const status = {
+    idle: last ? `Last checked ${ago(last)}` : 'Not checked yet',
+    checking: 'Checking GitHub for updates…',
+    downloading: `Downloading version ${esc(UPD.version)}…`,
+    latest: `You're up to date · checked ${ago(last)}`,
+    ready: `Version ${esc(UPD.version)} is downloaded and verified. It installs next time you open the app, or restart now.`,
+    error: `Update failed: ${esc(UPD.msg)}`,
+  }[UPD.state];
+  const busy = UPD.state === 'checking' || UPD.state === 'downloading';
+  if (!$('#appinfo') || ticket !== appInfo.n) return; // navigated away, or a newer status is being shown
+  $('#appinfo').innerHTML = `<div class="set-row"><div><b>Version</b><div class="hint" style="margin:0">${esc(fmtVersion(build))}</div></div></div>
+    <div class="set-row"><div><b>Running from</b><div class="hint" style="margin:0">${source}</div></div></div>
+    <p class="${UPD.state === 'error' ? 'error' : 'hint'}" style="margin:10px 0">${status}</p>
+    <div class="actions" style="margin-top:0"><button ${busy ? 'disabled' : ''} onclick="checkForUpdate(true)">${icon('refresh')} ${busy ? 'Working…' : 'Check for updates'}</button>
+    ${UPD.state === 'ready' ? `<button class="primary" onclick="restartToUpdate()">Restart now</button>` : ''}</div>`;
+}
+async function restartToUpdate() { await updater()?.reload(); } // applies the queued version
+function normalize(data) {
+  const d = data || {};
+  for (const c of COLLECTIONS) d[c] ||= [];
+  d.settings ||= {};
+  if (!d.settings.unitsV1) { // before per-exercise units existed every weight was kg
+    for (const w of d.workouts) for (const i of w.items || []) i.unit ||= 'kg';
+    d.settings.unitsV1 = true;
+  }
+  return d;
 }
 async function boot() {
-  checkForUpdate().catch(() => {}); // offline or GitHub unreachable: keep running this version
-  S = await dbGet('data') || {};
-  for (const c of COLLECTIONS) S[c] ||= [];
+  updater()?.notifyAppReady().catch(() => {}); // tells the updater this version started fine (else it rolls back)
+  S = normalize(await dbGet('data'));
+  for (const k of ['rest', 'bar']) if (store.get(k) && S.settings[k] === undefined) S.settings[k] = +store.get(k); // old per-device prefs
+  await persist();
   for (const m of S.media) { const b = await dbGet('file:' + m.id); if (b) URLS[m.id] = URL.createObjectURL(b); }
   navigator.storage?.persist?.(); // ask the browser not to evict our data
   render();
+  checkForUpdate();
 }
+document.addEventListener('visibilitychange', () => { // re-check when coming back to the app after an hour or more
+  const last = store.get('lastUpdateCheck');
+  if (!document.hidden && (!last || Date.now() - new Date(last) > 36e5)) checkForUpdate();
+});
 $('#dialog').addEventListener('click', e => { if (e.target === $('#dialog')) closeDialog(); }); // tap backdrop to close
 window.onhashchange = render;
 boot();

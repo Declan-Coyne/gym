@@ -4,3 +4,4 @@ data-dev/
 ios/
 build/
 .env
+www/build.json

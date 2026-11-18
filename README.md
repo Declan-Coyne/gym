@@ -15,23 +15,34 @@ over the top. Reinstalling over the top keeps your data; **deleting the app dele
 
 ## Updates (no reinstalling)
 
-Every push to `main` that changes `www/` is published by GitHub Actions to the `updates` branch.
-When you open myGym with internet, it checks that branch, downloads any newer version in the background,
-and switches to it the next time you open the app. With no internet it runs the last version it downloaded.
+Every push to `main` that changes `www/` is published by GitHub Actions to the `updates` branch as a zip,
+plus `version.json` with its version (hash of `www/`), date and SHA-256 checksum.
+When you open myGym with internet (or come back to it after an hour), it checks `version.json`. Any newer version downloads
+in the background, and the updater verifies the checksum before unpacking it. The new version installs the next time you close or switch away from the app.
+With no internet it runs the last version it downloaded. If a new version fails to start, the app rolls back by itself.
+
+**Settings → App** shows the version you're running, where it's running from (the installed app or a downloaded update)
+and when it last checked. It has **Check for updates** and, once an update is downloaded, **Restart now**.
 
 You only need a new `.ipa` from Sideloadly when the native shell changes (`package.json`, `capacitor.config.json`,
 the app icon). That's rare, and GitHub Actions rebuilds the `.ipa` for you when it happens.
 
+## Settings
+
+More → **Settings**: units (exercise weights kg/lb, body weight kg/lb, measurements cm/in), rest timer length,
+beep and vibration, default bar weights, theme, Claude API key and model, backup/restore/delete, and app version and updates.
+Each exercise can also have its own kg/lb unit (on the exercise page). Past sets keep the unit they were logged in and are converted for charts, records and totals.
+
 ## AI planner (Claude API key)
 
-More → **Claude API key**. Paste a key from console.anthropic.com → API Keys.
+More → Settings → **Claude API key**. Paste a key from console.anthropic.com → API Keys.
 The key is saved only on the phone and sent only to Anthropic. Each suggestion costs a few cents.
 Set a monthly spend limit in the Console. When the key expires, paste a new one in the same place.
 
 ## Backups
 
-More → **Back up data** opens the share sheet. Save the file to Files or iCloud. It includes your records and photos, but not videos.
-More → **Restore backup** loads a backup and replaces everything on the phone.
+Settings → **Back up data** opens the share sheet. Save the file to Files or iCloud. It includes your records and photos, but not videos.
+Settings → **Restore backup** loads a backup and replaces everything on the phone.
 
 ## What's in it
 

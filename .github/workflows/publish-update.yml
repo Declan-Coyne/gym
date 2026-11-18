@@ -13,13 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # for the date of the last app change
       - name: Zip app and push to the updates branch
         run: |
           set -e
-          V=$(git rev-parse --short HEAD)
+          # version = hash of the www/ folder, so the .ipa build and this update agree on the version of identical files
+          V=$(git rev-parse --short HEAD:www)
+          D=$(git log -1 --format=%cI -- www)
+          echo "{\"version\":\"$V\",\"date\":\"$D\"}" > www/build.json
           mkdir out
-          (cd www && zip -qr "../out/www-$V.zip" .)
-          echo "{\"version\":\"$V\",\"url\":\"https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/www-$V.zip\"}" > out/version.json
+          (cd www && zip -qrX "../out/www-$V.zip" .)
+          SUM=$(sha256sum "out/www-$V.zip" | cut -d' ' -f1)
+          echo "{\"version\":\"$V\",\"date\":\"$D\",\"url\":\"https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/www-$V.zip\",\"checksum\":\"$SUM\"}" > out/version.json
+          cat out/version.json
           cd out
           git init -q -b updates
           git add .

@@ -13,6 +13,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Stamp version (same scheme as publish-update.yml)
+        run: echo "{\"version\":\"$(git rev-parse --short HEAD:www)\",\"date\":\"$(git log -1 --format=%cI -- www)\"}" | tee www/build.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
