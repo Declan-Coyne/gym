@@ -1,0 +1,13 @@
+Workout website
+* add workouts
+* Add activities
+* Keep track of muscles each activity works and in workout
+* AI integration to suggest workout based on parameters ( prev workout, time, targeted muscles)
+* Add videos and photos to specific activities to remember how they are done
+* Progress photos and measurements
+* Integration with Apple health
+* Google sign in
+* Notifications for workout reminders 
+* When marking workout as complete, be able to mark gym as quiet, medium, busy etc. so you can establish ideal workout times
+* Collaboration so you can share and compare with friends and collaborate with pt
+* Set goals and AI base workouts on goals

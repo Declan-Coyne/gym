@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gym-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "env": { "DEV_NO_AUTH": "1", "PORT": "3000", "DATA_DIR": "data-dev" },
+      "port": 3000
+    }
+  ]
+}
