@@ -1,0 +1,27 @@
+# After every change to the app (www/), publish it as a zip on the "updates" branch.
+# The installed iPhone app checks updates/version.json on launch and downloads the new zip in the background.
+name: Publish app update
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [www/**, .github/workflows/publish-update.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip app and push to the updates branch
+        run: |
+          set -e
+          V=$(git rev-parse --short HEAD)
+          mkdir out
+          (cd www && zip -qr "../out/www-$V.zip" .)
+          echo "{\"version\":\"$V\",\"url\":\"https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updates/www-$V.zip\"}" > out/version.json
+          cd out
+          git init -q -b updates
+          git add .
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "App update $V"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" updates

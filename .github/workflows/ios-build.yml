@@ -1,0 +1,49 @@
+# Builds an unsigned myGym.ipa (Sideloadly signs it with your Apple ID) and attaches it to the "ios" release.
+# Runs when the native shell changes, or by hand: Actions -> Build iOS app -> Run workflow.
+name: Build iOS app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [package.json, package-lock.json, capacitor.config.json, resources/**, .github/workflows/ios-build.yml]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Create iOS project
+        run: npx cap add ios
+      - name: App icon and permissions
+        run: |
+          set -e
+          ICONS=ios/App/App/Assets.xcassets/AppIcon.appiconset
+          ls "$ICONS"
+          for f in "$ICONS"/*.png; do cp resources/icon-1024.png "$f"; done
+          P=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Take progress photos and exercise videos.'" "$P"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Record sound with exercise videos.'" "$P"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Add progress photos and exercise videos from your library.'" "$P"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'Save backups and photos.'" "$P"
+      - run: npx cap sync ios
+      - name: Build (unsigned)
+        run: |
+          set -e
+          if [ -d ios/App/App.xcworkspace ]; then SRC="-workspace ios/App/App.xcworkspace"; else SRC="-project ios/App/App.xcodeproj"; fi
+          xcodebuild $SRC -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry myGym.ipa Payload
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios --yes --cleanup-tag || true
+          gh release create ios myGym.ipa --target "$GITHUB_SHA" --title "myGym for iPhone" \
+            --notes "Install myGym.ipa with Sideloadly. Built from ${GITHUB_SHA::7}. Later app changes arrive inside the app automatically."

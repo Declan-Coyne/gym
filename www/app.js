@@ -348,7 +348,13 @@ async function exportData() {
   toast('Preparing backup…');
   const files = {};
   for (const m of S.media) if (m.type.startsWith('image')) { const b = await dbGet('file:' + m.id); if (b) files[m.id] = await toDataUrl(b); }
-  const file = new File([JSON.stringify({ ...S, files })], `mygym-backup-${today()}.json`, { type: 'application/json' });
+  const name = `mygym-backup-${today()}.json`, json = JSON.stringify({ ...S, files });
+  const { Filesystem, Share } = window.Capacitor?.Plugins || {};
+  if (Share) { // iPhone app: write the file, then open the share sheet (Save to Files / iCloud / AirDrop)
+    const { uri } = await Filesystem.writeFile({ path: name, data: json, directory: 'CACHE', encoding: 'utf8' });
+    return Share.share({ title: name, files: [uri] }).catch(() => {});
+  }
+  const file = new File([json], name, { type: 'application/json' });
   if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file] }).catch(() => {}); // iPhone: Save to Files / iCloud
   const a = document.createElement('a');
   a.href = URL.createObjectURL(file);
@@ -1187,12 +1193,29 @@ function render() {
   keepAwake(name === 'live');
   tick();
 }
+// ---------- in-app updates (iPhone app only) ----------
+// GitHub Actions publishes www/ as a zip on the 'updates' branch after every push. On launch we confirm this version
+// works, then check for a newer one, download it in the background and queue it for the next launch.
+// Offline, the check just fails and the last downloaded version keeps running.
+const UPDATES = 'https://raw.githubusercontent.com/Declan-Coyne/gym/updates/version.json';
+async function checkForUpdate() {
+  const U = window.Capacitor?.Plugins?.CapacitorUpdater;
+  if (!U) return;
+  await U.notifyAppReady(); // without this the plugin rolls back to the previous version
+  const latest = await (await fetch(UPDATES, { cache: 'no-store' })).json();
+  const { bundle } = await U.current();
+  if (!latest.version || latest.version === bundle.version || latest.version === store.get('queuedVersion')) return;
+  const b = await U.download({ url: latest.url, version: latest.version });
+  await U.next({ id: b.id });
+  store.set('queuedVersion', latest.version);
+  toast('Update downloaded — it’s used next time you open myGym');
+}
 async function boot() {
+  checkForUpdate().catch(() => {}); // offline or GitHub unreachable: keep running this version
   S = await dbGet('data') || {};
   for (const c of COLLECTIONS) S[c] ||= [];
   for (const m of S.media) { const b = await dbGet('file:' + m.id); if (b) URLS[m.id] = URL.createObjectURL(b); }
   navigator.storage?.persist?.(); // ask the browser not to evict our data
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   render();
 }
 $('#dialog').addEventListener('click', e => { if (e.target === $('#dialog')) closeDialog(); }); // tap backdrop to close

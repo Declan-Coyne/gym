@@ -1,0 +1,9 @@
+{
+  "appId": "com.declancoyne.mygym",
+  "appName": "myGym",
+  "webDir": "www",
+  "ios": { "contentInset": "never" },
+  "plugins": {
+    "CapacitorUpdater": { "autoUpdate": false, "statsUrl": "" }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "mygym",
+  "private": true,
+  "description": "myGym: personal workout tracker, built as an iOS app with Capacitor",
+  "dependencies": {
+    "@capacitor/core": "8.6.2",
+    "@capacitor/ios": "8.6.2",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/share": "8.0.3",
+    "@capgo/capacitor-updater": "8.54.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2"
+  }
+}
